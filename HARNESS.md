@@ -234,6 +234,10 @@ A host-side `connect()` proves nothing about socat: Docker's port forwarder acce
 
 Both publish a Registry and a socket for the same Project Root. The Bridge tests get their own container (`bridge_container`, other host ports) and the canary suite keeps its own. Build both: `make canary brain`.
 
+### The Brain's startup is traced
+
+`Brain.await_ready` records `(state reported, import commits so far)` at every poll in `Brain.trace`. `test_the_brain_never_claimed_ready_before_the_import_finished` reads it: Ready before the first import commit would mean serving *not resolved until the project is fully loaded*, and the trace must also contain an Indexing sample or the test proves nothing. `$/ij/debug/indexing` puts IntelliJ into dumb mode for a chosen time so the Indexing state can be provoked on demand.
+
 ### Which window has the focus decides what IntelliJ will do
 
 A design that reads a *shown* completion lookup returns nothing whenever IntelliJ is not the active application (ADR-0008, amendment). The Spike missed this because its container held one window; once Neovim's `xterm` holds the X focus, the same request that returned 402 items returns none. The Brain now takes the items from `completionFinished`, which does not care. Keep the lesson: anything that depends on IntelliJ's UI state should be tested in the state the Bridge lives in, with Neovim focused. `Display.focus` exists for that, and `$/ij/debug/state` reports `appActive` so a test can prove the condition held instead of passing vacuously.

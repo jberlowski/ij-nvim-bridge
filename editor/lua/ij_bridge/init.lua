@@ -11,6 +11,43 @@ local M = {}
 
 M.name = 'ij-bridge'
 
+--- The Brain's last announced state per Session (SPEC.md §8), by client id.
+M.states = {}
+
+local reasons = {
+  import = 'importing project',
+  indexing = 'indexing',
+  model = 'loading project model',
+}
+
+--- Called for every `$/ij/status` notification.
+function M.on_status(client_id, params)
+  M.states[client_id] = params
+  vim.api.nvim_exec_autocmds('User', { pattern = 'IjBridgeStatus', modeline = false, data = params })
+  vim.cmd.redrawstatus()
+end
+
+--- The Brain's state for the buffer's Session, or nil when Dormant / not attached.
+function M.status(buf)
+  local client = M.client(buf or 0)
+  return client and M.states[client.id] or nil
+end
+
+--- For a statusline. Empty when Dormant, so it costs nothing outside a project.
+--- Indexing is always visible and never silent: the developer must be able to see
+--- why completion and diagnostics have gone quiet.
+---   lualine: sections = { lualine_x = { require('ij_bridge').statusline } }
+function M.statusline()
+  local status = M.status(0)
+  if not status then
+    return ''
+  end
+  if status.state == 'Ready' then
+    return 'IJ'
+  end
+  return 'IJ: ' .. (reasons[status.reason] or 'not ready')
+end
+
 local function buftype_ok(buf)
   return vim.api.nvim_buf_is_valid(buf)
     and vim.bo[buf].buftype == ''
@@ -50,7 +87,15 @@ function M.attach(buf)
       ['$/ij/completionItems'] = function(err, params)
         require('ij_bridge.blink').on_items(err, params)
       end,
+      ['$/ij/status'] = function(_, params, ctx)
+        if params then
+          require('ij_bridge').on_status(ctx.client_id, params)
+        end
+      end,
     },
+    on_exit = function(_, _, client_id)
+      M.states[client_id] = nil
+    end,
   }, { bufnr = buf })
 end
 
@@ -116,7 +161,11 @@ function M.setup(_)
     if not entry then
       print('ij-bridge: Dormant (no Project Root matches this buffer)')
     elseif M.client(buf) then
-      print(('ij-bridge: attached to %s (%s)'):format(entry.root, entry.ide or '?'))
+      local status = M.status(buf)
+      local state = not status and 'state not reported yet'
+        or status.state == 'Ready' and 'ready'
+        or (reasons[status.reason] or 'not ready')
+      print(('ij-bridge: attached to %s (%s), %s'):format(entry.root, entry.ide or '?', state))
     else
       print(('ij-bridge: %s is serving this buffer, but it is not attached'):format(entry.root))
     end

@@ -354,6 +354,68 @@ class TestDiagnostics:
         published(wire, RESOLUTION, lambda d: d == [])
 
 
+# ------------------------------------------------------------------- state
+def status_of(wire, until, timeout=30):
+    """Read `$/ij/status` notifications until one satisfies `until`."""
+    got = wire.notifications("$/ij/status", until=until, timeout=timeout)
+    assert got and until(got[-1]), f"never saw the expected status; saw {got}"
+    return got[-1]
+
+
+class TestState:
+    """SPEC.md §8: Indexing is always visible and never silent."""
+
+    def test_the_brain_never_claimed_ready_before_the_import_finished(self, bridge):
+        """The startup trace: the state the Brain reported, alongside how many
+        Gradle imports had committed. Ready before the first commit would mean
+        serving 'not resolved until the project is fully loaded'."""
+        trace = bridge.trace
+        assert any(state == "Indexing" for state, _ in trace), (
+            f"the import window was never observed, so this proves nothing: {trace}")
+        assert not [t for t in trace if t[0] == "Ready" and t[1] == 0], trace
+
+    def test_state_is_pushed_when_a_session_starts(self, wire):
+        assert status_of(wire, lambda p: True)["state"] == "Ready"
+
+    def test_indexing_is_announced_and_diagnostics_are_withheld(self, bridge_container, wire):
+        text = bridge_container.read_file(CONSUMER)
+        wire.did_open(CONSUMER, text)
+        published(wire, CONSUMER, lambda d: not unresolved(d))
+
+        wire.request("$/ij/debug/indexing", {"ms": 6000})
+        during = status_of(wire, lambda p: p["state"] == "Indexing")
+        assert during["reason"] == "indexing"
+
+        # An error typed while Indexing must not be published: stale is worse than none.
+        end_line = len(text.rstrip("\n").split("\n")) - 1
+        wire.did_change(CONSUMER, 1, replace_range(end_line, 0, 0, "    fun broken() = stillNotDefined()\n"))
+        import time
+        wire.timeout = 2.5
+        try:
+            leaked = [p for p in wire.notifications("textDocument/publishDiagnostics",
+                                                    until=lambda p: True, timeout=2.5)
+                      if p["uri"] == uri(CONSUMER)]
+        except Exception:                                   # nothing arrived: what we want
+            leaked = []
+        assert leaked == [], f"diagnostics were published while Indexing: {leaked}"
+        wire.timeout = 40
+
+        # Leaving Indexing re-publishes what was withheld.
+        status_of(wire, lambda p: p["state"] == "Ready")
+        published(wire, CONSUMER, lambda d: any("stillNotDefined" in x["message"] for x in unresolved(d)))
+
+    def test_completion_while_indexing_is_degraded_not_an_error(self, bridge_container, wire):
+        text, line, ch = large_surface(bridge_container)
+        wire.did_open(CONSUMER, text)
+        wire.request("$/ij/debug/indexing", {"ms": 4000})
+        status_of(wire, lambda p: p["state"] == "Indexing")
+        result = wire.request("$/ij/completion", {
+            "textDocument": {"uri": uri(CONSUMER)}, "position": {"line": line, "character": ch}})
+        assert result["degraded"] is True and result["items"] == []
+        assert result["isIncomplete"] is True, "the Editor must ask again on the next keystroke"
+        status_of(wire, lambda p: p["state"] == "Ready")
+
+
 # ------------------------------------------------------------------ overhead
 class TestOverhead:
     """SPEC.md §7 / ADR-0005: gate on what the Bridge adds, never on IntelliJ."""

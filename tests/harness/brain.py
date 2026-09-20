@@ -148,7 +148,9 @@ class Brain:
         Not-Indexing alone is not enough either - it is reached while the
         import is still in flight, when diagnostics come back as "Not resolved
         until the project is fully loaded" and completion resolves nothing
-        (HARNESS.md §13). Ready therefore means:
+        (HARNESS.md §13). The state the Brain reports along the way is recorded in
+        `self.trace`, so a test can check it never claimed Ready mid-import.
+        Ready therefore means:
 
           1. a Gradle import has committed its model since `synced_after`
              imports had (idea.log is appended across relaunches), and
@@ -158,17 +160,20 @@ class Brain:
         deadline = time.monotonic() + timeout
         consecutive = 0
         last = "never answered"
+        self.trace = []   # (state the Brain reported, import commits so far)
         while time.monotonic() < deadline:
             try:
-                if ide.sync_commits() <= synced_after:
+                commits = ide.sync_commits()
+                state = self.request_local(sock_path, state_method)[0]["result"]
+                # The canary reports a JSON boolean `indexing`; the Bridge's
+                # debug surface reports SPEC.md §8's state by name.
+                idle = (state["indexing"] is False if "indexing" in state
+                        else state.get("state") == "Ready")
+                self.trace.append(("Ready" if idle else "Indexing", commits))
+                last = state.get("indexing", state.get("state", "?"))
+                if commits <= synced_after:
                     last, consecutive = "Gradle import not committed", 0
                 else:
-                    state = self.request_local(sock_path, state_method)[0]["result"]
-                    # The canary reports a JSON boolean `indexing`; the Bridge's
-                    # debug surface reports SPEC.md §8's state by name.
-                    idle = (state["indexing"] is False if "indexing" in state
-                            else state.get("state") == "Ready")
-                    last = state.get("indexing", state.get("state", "?"))
                     consecutive = consecutive + 1 if idle else 0
                     if consecutive >= 2:
                         return

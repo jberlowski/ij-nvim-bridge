@@ -57,7 +57,8 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     put("capabilities", brain.capabilities())
                     put("serverInfo", buildJsonObject { put("name", "ij-nvim-bridge"); put("version", "0.1.0") })
                 })
-                "initialized" -> {}
+                // Tell this Editor where the Brain stands, so it never has to ask.
+                "initialized" -> transport.send(Wire.notification("\$/ij/status", brain.status().toJson()))
                 "shutdown" -> reply(id, JsonNull)
                 "exit" -> return false
 
@@ -92,6 +93,22 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
 
                 "\$/ij/completion" -> {
                     val uri = params.obj("textDocument").str("uri")
+                    val status = brain.status()
+                    if (status.state != "Ready") {
+                        // SPEC.md §8: Degraded, not an error and not silence. IntelliJ
+                        // would throw IndexNotReadyException and raise an IDE
+                        // notification nobody is looking at.
+                        transport.send(Wire.response(id, buildJsonObject {
+                            put("streamId", "-")
+                            put("items", JsonArray(emptyList()))
+                            put("done", true)
+                            put("isIncomplete", true)
+                            put("degraded", true)
+                            put("state", status.state)
+                            status.reason?.let { put("reason", it) }
+                        }))
+                        return true
+                    }
                     brain.completion.submit(CompletionEngine.Request(
                         id = id, uri = uri, position = params.obj("position"),
                         streamId = UUID.randomUUID().toString().take(8),
@@ -106,6 +123,10 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 "\$/ij/debug/saveAll" -> {
                     // What an idle IDE or a frame deactivation triggers.
                     edt { com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments() }
+                    reply(id, JsonNull)
+                }
+                "\$/ij/debug/indexing" -> {
+                    brain.simulateIndexing(params.int("ms").toLong())
                     reply(id, JsonNull)
                 }
                 "\$/ij/debug/setTabLimit" -> {
@@ -138,7 +159,10 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
         return buildJsonObject {
             put("project", brain.projectName())
             put("capabilities", brain.capabilities())
-            put("state", brain.state())
+            brain.status().let {
+                put("state", it.state)
+                it.reason?.let { r -> put("reason", r) }
+            }
             put("evictions", brain.mirrors.evictions.get())
             put("saveAcks", brain.saveAcks.get())
             // Whether IntelliJ is the active application. A developer in Neovim

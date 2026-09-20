@@ -84,6 +84,7 @@ class BrainService(private val project: Project) : Disposable {
         server = channel
         socketPath = path
         Registry.publish(root, sockName, ide())
+        watchStatus()
         log.info("bridge: serving $root on $path")
 
         Thread({ acceptLoop(channel) }, "bridge-accept-${project.name}").apply {
@@ -108,15 +109,66 @@ class BrainService(private val project: Project) : Disposable {
     }
 
     /**
-     * SPEC.md §8. Indexing covers the build-model import as well as dumb mode:
-     * mid-import IntelliJ reports not-dumb while every reference is unresolved
-     * (HARNESS.md §13). No source roots is the observable shadow of that; a
-     * direct signal from the Gradle integration is still open (SPEC.md §14).
+     * SPEC.md §8. Indexing is any of: a build-model import in flight, IntelliJ's
+     * own indexing (dumb mode), or a project model that is not loaded yet.
+     *
+     * The import matters as much as dumb mode. While it runs IntelliJ reports
+     * not-dumb, yet every reference is unresolved and diagnostics read "Not
+     * resolved until the project is fully loaded" (HARNESS.md §13). It is read
+     * from the external-system layer directly rather than inferred.
      */
-    fun state(): String {
-        val dumb = DumbService.getInstance(project).isDumb
-        val hasRoots = ProjectRootManager.getInstance(project).contentSourceRoots.isNotEmpty()
-        return if (dumb || !hasRoots) "Indexing" else "Ready"
+    fun status(): Status {
+        val importing = try {
+            com.intellij.openapi.externalSystem.service.internal.ExternalSystemProcessingManager.getInstance()
+                .hasTaskOfTypeInProgress(
+                    com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskType.RESOLVE_PROJECT, project)
+        } catch (_: Throwable) {
+            false // no external-system layer in this IDE: nothing to import
+        }
+        if (importing) return Status("Indexing", "import")
+        if (DumbService.getInstance(project).isDumb) return Status("Indexing", "indexing")
+        if (ProjectRootManager.getInstance(project).contentSourceRoots.isEmpty()) return Status("Indexing", "model")
+        return Status("Ready", null)
+    }
+
+    fun state(): String = status().state
+
+    data class Status(val state: String, val reason: String?) {
+        fun toJson(): JsonObject = buildJsonObject {
+            put("state", state)
+            if (reason != null) put("reason", reason)
+        }
+    }
+
+    /** Announce every change of state to every Session, and re-publish what was withheld. */
+    private fun watchStatus() {
+        var last: Status? = null
+        monitor.scheduleWithFixedDelay({
+            try {
+                val now = status()
+                if (now == last) return@scheduleWithFixedDelay
+                val before = last
+                last = now
+                broadcast(Wire.notification("\$/ij/status", now.toJson()))
+                if (now.state == "Ready" && before != null) diagnostics.republishAll()
+            } catch (t: Throwable) {
+                log.warn("bridge: status check failed", t)
+            }
+        }, 0, 400, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    private val monitor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "bridge-status").apply { isDaemon = true }
+    }
+
+    /** Harness only: put IntelliJ in dumb mode for [ms] so Indexing can be observed. */
+    fun simulateIndexing(ms: Long) {
+        com.intellij.openapi.project.DumbService.getInstance(project).queueTask(
+            object : com.intellij.openapi.project.DumbModeTask() {
+                override fun performInDumbMode(indicator: com.intellij.openapi.progress.ProgressIndicator) {
+                    Thread.sleep(ms)
+                }
+            })
     }
 
     fun capabilities(): JsonObject = buildJsonObject {
@@ -148,6 +200,7 @@ class BrainService(private val project: Project) : Disposable {
     fun ide(): String = ApplicationInfo.getInstance().build.asString()
 
     override fun dispose() {
+        monitor.shutdownNow()
         stopped.set(true)
         runCatching { server?.close() }
         socketPath?.let { runCatching { Files.deleteIfExists(it) } }

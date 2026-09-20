@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics are built. Surfacing Indexing and incremental completion are next; see *Next* in §12.
+Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics and the Indexing state are built. Incremental completion is next; see *Next* in §12.
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -91,6 +91,7 @@ $/ij/completion          request       streaming completion (§6)
 $/ij/completionItems     notification  S→C, subsequent batches
 $/ij/completionCancel    notification  C→S, abandon a stream
 $/ij/status              notification  S→C, Brain state (§8)
+$/ij/focus               notification  C→S, the Editor's active buffer changed (§9)
 $/ij/caret               notification  S→C, Mirror caret — debug only (§9)
 $/ij/debug/state         request       harness introspection (§9)
 ```
@@ -236,7 +237,11 @@ A slow IntelliJ — cold index, large project, loaded machine — must never fai
 | **Indexing** | Brain present, rebuilding indices **or importing the build model** | Completion: dumb-aware items only, marked Degraded. Diagnostics: **withheld**. State visible in statusline. |
 | **Ready** | Brain answering normally | Full advertised Capabilities. |
 
-Indexing happens several times a day on a real Java project — project open, `git pull`, Gradle sync — and can last minutes. The Gradle import counts: while it is in flight `DumbService` reports not-dumb, yet the daemon returns *Not resolved until the project is fully loaded* for every reference and completion resolves nothing (HARNESS §13). Publishing those would be exactly the stale-diagnostics failure the rule below exists to prevent. It is always visible and never silent. On exit from Indexing the Brain re-publishes diagnostics for every Mirror.
+Indexing happens several times a day on a real Java project — project open, `git pull`, Gradle sync — and can last minutes. The Gradle import counts: while it is in flight `DumbService` reports not-dumb, yet the daemon returns *Not resolved until the project is fully loaded* for every reference and completion resolves nothing (HARNESS §13). Publishing those would be exactly the stale-diagnostics failure the rule below exists to prevent.
+
+**Detection.** Indexing is any of: a build-model import in flight (`ExternalSystemProcessingManager.hasTaskOfTypeInProgress`), IntelliJ's own indexing (dumb mode), or a project model with no source roots yet. The reason is carried (`import`, `indexing`, `model`).
+
+**Surfacing.** The Brain pushes `$/ij/status` `{state, reason?}` when a Session initialises and on every change, checked every 400 ms. The Neovim plugin keeps the last state per Session and exposes `require('ij_bridge').statusline()` (empty when Dormant, `IJ` when ready, `IJ: importing project` / `IJ: indexing` / `IJ: loading project model` otherwise), a `User IjBridgeStatus` autocmd, and `:IjBridge`. Completion answers immediately as **Degraded** (`degraded: true`, `isIncomplete: true`, no items) instead of raising IntelliJ's `IndexNotReadyException` and an IDE notification nobody is looking at; diagnostics are withheld and re-published for every Mirror on leaving Indexing. A test asserts the Brain never reports Ready before the first import has committed.
 
 ## 9. Diagnostics
 
@@ -324,7 +329,6 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 - **Incremental completion.** Typing one more character must send a new request *and* immediately filter the results already returned, rather than starting from an empty menu. The Brain already re-requests (`is_incomplete_forward`); what is missing is showing the filtered previous items while the new answer is in flight, so the menu never blanks or flickers. IntelliJ's matching stays authoritative: the filtered set is a placeholder that the new answer replaces, never a substitute for it.
 - **A small cache of recent answers in the Editor.** Backspacing should give the earlier result at once. Keyed by buffer, position and prefix, and valid only while the buffer has not changed elsewhere (`changedtick`), since any edit can change what IntelliJ would say. Small and short-lived, so that a stale answer is never worse than waiting.
-- Diagnostics from the daemon's markup (§9) and surfacing Indexing (§8), including the Gradle import.
 
 **Deferred.** Bidirectional caret following · run configurations · refactorings beyond rename · licensed-tier harness profile and deep Spring assertions.
 
@@ -347,5 +351,5 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 - **Overhead budget of 15ms p95** now has a first measurement (§7), but not one that includes the Editor. Confirm or replace once it does.
 - **Coalescing intervals** (30ms completion, 150ms diagnostics) are guesses, to be tuned against the harness.
-- **How the Brain detects an import in flight.** The harness reads `idea.log`, which the Brain cannot. Candidate: the external-system processing manager's in-progress `RESOLVE_PROJECT` task. Unverified, and it may need a plugin dependency on the Gradle integration.
+- ~~How the Brain detects an import in flight.~~ Resolved: `ExternalSystemProcessingManager.hasTaskOfTypeInProgress(RESOLVE_PROJECT, project)`, read directly (§8).
 - **Multiple nvim instances against one project** — several Sessions on one socket. Expected to work; untested.

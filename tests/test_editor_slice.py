@@ -199,6 +199,29 @@ class TestDiagnostics:
                    message="returning to the buffer did not select its Mirror")
 
 
+# ------------------------------------------------------------------- state
+class TestStatus:
+
+    def test_the_status_line_is_empty_when_dormant(self, nvim, bridge_container):
+        bridge_container.write_file(DORMANT, "nothing to see\n")
+        nvim.command(f"edit {DORMANT}")
+        assert nvim.exec_lua("return require('ij_bridge').statusline()") == ""
+
+    def test_the_status_line_shows_indexing_and_recovers(self, nvim, probe):
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ",
+                   message="the status line never showed a ready Brain")
+
+        probe.request("$/ij/debug/indexing", {"ms": 5000})
+        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ: indexing",
+                   message="Indexing was never shown")
+        out = nvim.exec_lua("return vim.api.nvim_exec2('IjBridge', {output = true}).output")
+        assert "indexing" in out, out
+
+        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ",
+                   timeout=30, message="the status line never returned to ready")
+
+
 # --------------------------------------------------------------- the write
 class TestWriting:
 
