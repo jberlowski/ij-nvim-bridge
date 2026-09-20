@@ -19,7 +19,7 @@ On macOS a container and a VM both run inside a Linux VM regardless, so the choi
 ```
 ij-nvim-harness
 ├── Xvfb :99  +  x11vnc  +  noVNC          → watch at localhost:6080
-├── IntelliJ IDEA (free tier) on :99
+├── IntelliJ IDEA 2026.2.3 (262.10968.63, free tier) on :99
 ├── Neovim + LazyVim (pinned) + Bridge plugin
 │     └── --listen /run/harness/nvim.sock  ← drivable by RPC
 ├── JDK + Gradle
@@ -126,7 +126,15 @@ tests/
 
 Python is deliberately a **third** language. A Kotlin harness could import the Brain's DTOs, and a wrong DTO would then pass its own test — the code and the test sharing one mistake. A neutral driver forces genuine black-box testing of the wire format.
 
-## 9. Tier profiles
+## 9. Version pinning
+
+The image pins an exact IntelliJ build — `262.10968.63` — even though the project targets latest-only ([ADR-0007](./docs/adr/0007-target-latest-intellij-only.md)). Latest-only is a *policy about which version we support*; the harness still needs a *fixed* version, or a rebuilt image could change behaviour with no corresponding change in the repository, and the overhead baseline would drift for reasons nothing recorded.
+
+Bumping it is a deliberate commit. An IntelliJ upgrade breaking the plugin is expected rather than exceptional, and re-running the Spike's assumptions against a new build is precisely what the harness exists to do.
+
+The JDK, Gradle, Neovim and LazyVim versions are pinned for the same reason.
+
+## 10. Tier profiles
 
 ```
 make harness              free tier — ephemeral, no credentials   ← v1
@@ -135,7 +143,7 @@ make harness TIER=licensed                                        ← deferred
 
 Only the free profile is built. The licensed profile — mounting a real IDE config to assert deep Spring intelligence — is deferred, and per Passthrough needs no Bridge-side code when it arrives: those Capabilities are either advertised by the connected Brain or they are not.
 
-## 10. Unit tests are elsewhere
+## 11. Unit tests are elsewhere
 
 The harness is **integration only**. It is slow, it involves two real processes and a real IDE, and it should stay small and high-value.
 
@@ -147,7 +155,7 @@ The harness is **integration only**. It is slow, it involves two real processes 
 
 A behaviour testable headlessly in the Gradle build belongs there, not here.
 
-## 11. Open
+## 12. Open
 
 - **Does IntelliJ behave correctly in a container** — inotify limits for VFS file watchers, memory ceilings, Xvfb quirks. To be answered by the Spike (SPEC §11), which is the harness's first real workload.
 - **Image size.** IntelliJ plus a JDK plus a warmed Gradle cache plus a baked index is large. Acceptable if layer caching keeps rebuilds cheap; revisit if it does not.

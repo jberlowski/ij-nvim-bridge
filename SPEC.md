@@ -295,7 +295,7 @@ Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor 
 |---|---|---|
 | Brain | Kotlin, Gradle, IntelliJ Platform Gradle Plugin 2.x | |
 | Brain wire | hand-rolled JSON-RPC + `kotlinx.serialization` | [ADR-0002](./docs/adr/0002-lsp-wire-format-hand-rolled-not-lsp4j.md) |
-| Min IntelliJ | **2025.3** | The unified release. No CE/Ultimate branching anywhere — only Capability negotiation. |
+| IntelliJ | **Latest only — 2026.2, build `262`** | No compatibility range. Newest APIs are fair game. [ADR-0007](./docs/adr/0007-target-latest-intellij-only.md) |
 | Editor | Lua, nvim **0.11+** | `vim.lsp.rpc.connect(path)` handles the unix socket natively |
 | Completion UI | blink.cmp (LazyVim default since v14) | nvim-cmp and `vim.lsp.completion` work via the fallback door |
 | Harness | Python + pytest, OCI container via OrbStack | [HARNESS.md](./HARNESS.md) · [ADR-0006](./docs/adr/0006-harness-is-a-mac-local-container.md) |
@@ -304,7 +304,6 @@ Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor 
 
 ## 14. Open
 
-- **Minimum IntelliJ 2025.3 is unverified against the real target.** Check what is installed on the WSL box; it dictates the floor.
 - **Overhead budget of 15ms p95 is a guess.** Replace with a measured figure once the Spike records a baseline.
 - **Coalescing intervals** (30ms completion, 150ms diagnostics) are guesses, to be tuned against the harness.
 - **Multiple nvim instances against one project** — several Sessions on one socket. Expected to work; untested.
