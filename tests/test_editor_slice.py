@@ -336,6 +336,102 @@ class TestCompletion:
             labels, nvim.exec_lua("return require('ij_bridge.blink').last"))
 
 
+def probe_line(nvim, suffix: str) -> None:
+    """Put `LargeSurface().<suffix>` on the probe line and the cursor after it."""
+    lines = nvim.current.buffer[:]
+    row = next(i for i, l in enumerate(lines) if "val probe = LargeSurface()." in l)
+    lines[row] = "    val probe = LargeSurface()." + suffix
+    nvim.current.buffer[:] = lines
+    nvim.current.window.cursor = (row + 1, len(lines[row]))
+
+
+def stats(nvim) -> dict:
+    return nvim.exec_lua("return require('ij_bridge.blink').stats")
+
+
+class TestIncrementalCompletion:
+    """SPEC.md §12 Next: another character asks IntelliJ again while the menu
+    keeps showing what it has, and backspacing is answered from a small cache."""
+
+    def test_identical_state_is_answered_from_the_cache(self, nvim, probe, bridge_container):
+        large_surface(nvim, bridge_container)
+        complete(nvim)                                   # cold, and fills the cache
+        asked = probe.debug_state()["completionRequests"]
+        again = complete(nvim, "computeMetricNumber000")
+
+        assert probe.debug_state()["completionRequests"] == asked, "a cache hit must not ask IntelliJ"
+        assert again["found"]["computeMetricNumber000"] and again["count"] >= 300
+        assert stats(nvim)["hits"] >= 1
+
+    def test_backspacing_returns_to_an_answered_state_instantly(self, nvim, probe, bridge_container):
+        large_surface(nvim, bridge_container)
+        probe_line(nvim, "comp")
+        first = complete(nvim)
+        probe_line(nvim, "compu")
+        complete(nvim)
+        asked = probe.debug_state()["completionRequests"]
+
+        probe_line(nvim, "comp")                         # backspace
+        back = complete(nvim, "computeMetricNumber000")
+
+        assert probe.debug_state()["completionRequests"] == asked
+        assert back["count"] == first["count"], "the earlier answer, whole, not a subset"
+        assert back["found"]["computeMetricNumber000"]
+
+    def test_a_new_prefix_asks_again(self, nvim, probe, bridge_container):
+        large_surface(nvim, bridge_container)
+        probe_line(nvim, "comp")
+        complete(nvim)
+        asked = probe.debug_state()["completionRequests"]
+        probe_line(nvim, "compu")
+        complete(nvim)
+        assert probe.debug_state()["completionRequests"] == asked + 1
+
+    def test_an_edit_in_another_buffer_invalidates_the_cache(self, nvim, probe, bridge_container):
+        """IntelliJ's answer depends on every Mirrored buffer, not only this one."""
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: attached(nvim) == 1)
+        nvim.current.buffer.append("// unsaved", 0)            # stays Mirrored while hidden
+        nvim.command(f"hide edit {CONSUMER}")
+        large_surface(nvim, bridge_container)
+        complete(nvim)
+        complete(nvim)                                        # a hit
+        asked = probe.debug_state()["completionRequests"]
+
+        nvim.command(f"buffer {PRODUCER}")
+        nvim.current.buffer.append("// edited again", 0)
+        nvim.command(f"buffer {CONSUMER}")
+        probe_line(nvim, "compute")
+        complete(nvim)
+        assert probe.debug_state()["completionRequests"] == asked + 1, "served a stale answer"
+
+    def test_one_more_character_asks_again_and_the_menu_keeps_its_items(
+            self, nvim, probe, bridge_container):
+        """Through real blink.cmp. With IntelliJ artificially slow, type another
+        character: the request must go out, and the menu must keep showing the
+        previous items (filtered) rather than blank while it waits."""
+        nvim.command(f"edit {CONSUMER}")
+        wait_until(lambda: attached(nvim) == 1)
+        nvim.command("normal! G")
+        nvim.feedkeys(nvim.replace_termcodes("Oval probe = LargeSurface().comp"), "n", False)
+        wait_until(lambda: nvim.exec_lua("return require('blink.cmp').is_menu_visible()"),
+                   timeout=30, message="the first menu never appeared")
+        wait_until(lambda: nvim.exec_lua("return #(require('blink.cmp.completion.list').items or {})") > 0)
+        asked = probe.debug_state()["completionRequests"]
+
+        probe.request("$/ij/debug/completionDelay", {"ms": 3000})
+        try:
+            nvim.feedkeys("u", "n", False)                    # "compu": one more character
+            wait_until(lambda: probe.debug_state()["completionRequests"] > asked,
+                       timeout=10, message="typing another character did not ask IntelliJ again")
+            # The new answer is 3 s away. What does the menu show meanwhile?
+            visible = nvim.exec_lua("return require('blink.cmp').is_menu_visible()")
+            shown = nvim.exec_lua("return #(require('blink.cmp.completion.list').items or {})")
+            assert visible and shown > 0, (visible, shown)
+        finally:
+            probe.request("$/ij/debug/completionDelay", {"ms": 0})
+
+
 class TestCompletionInTheBackground:
     """The condition the Bridge actually runs in."""
 
@@ -369,12 +465,11 @@ class TestEditorOverhead:
               local line = vim.api.nvim_get_current_line()
               local ctx = { bufnr = vim.api.nvim_get_current_buf(), cursor = { row, #line },
                             line = line }
-              local closed = false
+              -- Measure IntelliJ, not the answer cache: a hit never reaches the Brain.
+              blink.clear_cache()
               blink.last = nil
-              source:get_completions(ctx, function(r)
-                if not r.is_incomplete_forward then closed = true end
-              end)
-              vim.wait(30000, function() return closed and blink.last ~= nil end, 1)
+              source:get_completions(ctx, function() end)
+              vim.wait(30000, function() return blink.active() == 0 and blink.last ~= nil end, 1)
               if i > 5 then table.insert(out, blink.last) end   -- five warm-up runs
               vim.wait(150)
             end

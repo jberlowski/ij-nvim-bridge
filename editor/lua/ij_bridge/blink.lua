@@ -23,15 +23,75 @@ local M = {}
 --- Open Streams by id, so `$/ij/completionItems` can find who is waiting.
 local streams = {}
 
+--- A small cache of finished answers, so backspacing is immediate (FEATURES.md,
+--- SPEC.md §12 Next).
+---
+--- IntelliJ's answer depends on the *whole* buffer, on every other Mirrored
+--- buffer, and on the position, so the key is all of those: a hash of this
+--- buffer's text plus the change ticks of the others. Typing then backspacing
+--- returns to an earlier text state, which is exactly a hit; any edit anywhere
+--- else changes the key, so a stale answer is never served. Short-lived and
+--- small on purpose: a wrong answer is worse than waiting.
+local CACHE_MAX = 8
+local CACHE_TTL_NS = 30 * 1e9
+local CACHE_MAX_BYTES = 1024 * 1024
+local cache = { order = {}, map = {} }
+
+--- Counters for the harness and for :IjBridge diagnostics.
+M.stats = { requests = 0, hits = 0 }
+
+function M.clear_cache()
+  cache = { order = {}, map = {} }
+end
+
+local function cache_key(ctx, client)
+  local lines = vim.api.nvim_buf_get_lines(ctx.bufnr, 0, -1, false)
+  local text = table.concat(lines, '\n')
+  if #text > CACHE_MAX_BYTES then
+    return nil -- hashing a huge buffer on every keystroke costs more than it saves
+  end
+  local others = 0
+  for _, b in ipairs(vim.lsp.get_buffers_by_client_id(client.id)) do
+    if b ~= ctx.bufnr and vim.api.nvim_buf_is_valid(b) then
+      others = others + vim.api.nvim_buf_get_changedtick(b) + b * 1e6
+    end
+  end
+  return table.concat({ ctx.bufnr, ctx.cursor[1], ctx.cursor[2], vim.fn.sha256(text), others }, ':')
+end
+
+local function cache_get(key)
+  local entry = key and cache.map[key]
+  if not entry then
+    return nil
+  end
+  if vim.uv.hrtime() - entry.at > CACHE_TTL_NS then
+    cache.map[key] = nil
+    return nil
+  end
+  return entry.items
+end
+
+local function cache_put(key, items)
+  if not key then
+    return
+  end
+  if not cache.map[key] then
+    table.insert(cache.order, key)
+    if #cache.order > CACHE_MAX then
+      cache.map[table.remove(cache.order, 1)] = nil
+    end
+  end
+  cache.map[key] = { items = items, at = vim.uv.hrtime() }
+end
+
 --- Timings of the most recent first response, read by the harness's speed gate
 --- (SPEC.md §7). t0 is when the request was sent; `delivered` is when blink.cmp
 --- had been handed the items - the closest the Editor can measure to "rendered"
 --- without also timing blink's own drawing.
 M.last = nil
 
---- How many Streams are still delivering. The harness waits on this: a Stream
---- that hit the Cap ends with is_incomplete_forward = true, so that flag cannot
---- be used to tell "finished" from "still going".
+--- How many Streams are still delivering. The harness waits on this: results are
+--- always marked incomplete now, so that flag cannot tell "finished" from "still going".
 function M.active()
   local n = 0
   for _ in pairs(streams) do
@@ -82,9 +142,23 @@ function Source:get_completions(ctx, callback)
   end
 
   local row, col = ctx.cursor[1], ctx.cursor[2]
+
+  -- Immediate answer for a text state IntelliJ has already been asked about.
+  -- Marked incomplete both ways, so the next keystroke, forward or back, comes
+  -- back here rather than being filtered locally by blink's own fuzzy matching:
+  -- IntelliJ's matching is the authority (Passthrough), the cache only skips the wait.
+  local key = cache_key(ctx, client)
+  local hit = cache_get(key)
+  if hit then
+    M.stats.hits = M.stats.hits + 1
+    callback({ items = vim.deepcopy(hit), is_incomplete_forward = true, is_incomplete_backward = true })
+    return function() end
+  end
+  M.stats.requests = M.stats.requests + 1
+
   -- LSP counts UTF-16 code units; blink and nvim count bytes.
   local character = vim.str_utfindex(ctx.line, 'utf-16', col, false)
-  local state = { cancelled = false, callback = callback }
+  local state = { cancelled = false, callback = callback, key = key, all = {} }
   local t0 = uv.hrtime()
 
   client:request('$/ij/completion', {
@@ -98,18 +172,23 @@ function Source:get_completions(ctx, callback)
     end
     if err or not result then
       -- Includes RequestCancelled: a newer request superseded this one.
-      callback({ items = {}, is_incomplete_forward = false, is_incomplete_backward = false })
+      callback({ items = {}, is_incomplete_forward = true, is_incomplete_backward = true })
       return
     end
     state.streamId = result.streamId
+    local items = convert(result.items)
+    vim.list_extend(state.all, items)
     if not result.done then
       streams[result.streamId] = state
+    elseif not result.isIncomplete and not result.degraded then
+      cache_put(state.key, vim.deepcopy(state.all)) -- a finished, complete answer
     end
     callback({
-      items = convert(result.items),
-      -- Still streaming, or closed at the Cap: ask again on the next keystroke.
-      is_incomplete_forward = (not result.done) or result.isIncomplete == true,
-      is_incomplete_backward = false,
+      items = items,
+      -- Always incomplete: every keystroke asks IntelliJ again while blink keeps
+      -- showing the previous list, filtered, so the menu never blanks.
+      is_incomplete_forward = true,
+      is_incomplete_backward = true,
     })
     local timings = result.timings or {}
     M.last = {
@@ -147,14 +226,15 @@ function M.on_items(err, params)
   if params.done then
     streams[params.streamId] = nil
   end
+  local items = convert(params.items)
+  vim.list_extend(state.all, items)
+  if params.done and not params.isIncomplete then
+    cache_put(state.key, vim.deepcopy(state.all)) -- a Stream that finished before the Cap
+  end
   -- Always answer the closing message, even with nothing to append: it is the
-  -- only way blink.cmp learns the final is_incomplete flag.
-  if #params.items > 0 or params.done then
-    state.callback({
-      items = convert(params.items),
-      is_incomplete_forward = (not params.done) or params.isIncomplete == true,
-      is_incomplete_backward = false,
-    })
+  -- only way blink.cmp learns the Stream is over.
+  if #items > 0 or params.done then
+    state.callback({ items = items, is_incomplete_forward = true, is_incomplete_backward = true })
   end
 end
 

@@ -199,6 +199,17 @@ def nvim_session(bridge, bridge_container):
           module = 'ij_bridge.blink', name = 'IntelliJ', async = true }})
         blink.add_filetype_source('kotlin', 'ij_bridge')
     """)
+    # blink.cmp fetches its fuzzy-matching binary over the network the first time
+    # it loads, in every fresh container: it is not baked into the image. A test
+    # that types before that finishes sees "the menu never appeared". Load it now
+    # (entering insert mode is what triggers it) and wait for the file.
+    nv.feedkeys(nv.replace_termcodes("i<Esc>"), "n", False)
+    from harness.util import wait_until
+    wait_until(
+        lambda: c.exec(
+            "test -f ~/.local/share/nvim/lazy/blink.cmp/target/release/libblink_cmp_fuzzy.so",
+            check=False).returncode == 0,
+        timeout=240, interval=1.0, message="blink.cmp never finished downloading its binary")
     return nv
 
 
@@ -213,6 +224,9 @@ def nvim(nvim_session):
     def wipe():
         nvim_session.command("stopinsert")
         nvim_session.command("silent! %bwipeout!")
+        # A test asserts v:errmsg is empty; nothing an earlier test or a fixture
+        # provoked may leak into it.
+        nvim_session.command("let v:errmsg = ''")
     wipe()
     yield nvim_session
     wipe()

@@ -248,6 +248,7 @@ A design that reads a *shown* completion lookup returns nothing whenever Intelli
 
 ## 14. Open
 
+- **blink.cmp's binary is not baked into the image.** It downloads at first use in every container, so the harness needs network and the `nvim_session` fixture waits for it. Baking it into the image (`nvim --headless` with blink loaded, at build time) would remove the network dependency and about a minute per run.
 - **Terminal emulator fidelity: answered.** blink.cmp's menu renders correctly in the harness `xterm`, with IntelliJ's items in IntelliJ's order and their signatures (`tests/artifacts/blink_menu.png` after the Editor suite). One flaw: the icon column is tofu, since the image carries no Nerd Font.
 - **Whether baked Gradle caches survive a reset cleanly**, or whether IntelliJ re-resolves against a new instance id.
 - **Mason's `tree-sitter-cli` install fails during the image build.** Harmless so far — treesitter parsers are irrelevant to the Bridge — but the LazyVim install is not pristine.

@@ -93,6 +93,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
 
                 "\$/ij/completion" -> {
                     val uri = params.obj("textDocument").str("uri")
+                    brain.completionRequests.incrementAndGet()
                     val status = brain.status()
                     if (status.state != "Ready") {
                         // SPEC.md §8: Degraded, not an error and not silence. IntelliJ
@@ -123,6 +124,10 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 "\$/ij/debug/saveAll" -> {
                     // What an idle IDE or a frame deactivation triggers.
                     edt { com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments() }
+                    reply(id, JsonNull)
+                }
+                "\$/ij/debug/completionDelay" -> {
+                    DebugLevers.completionDelayMs = params.int("ms").toLong()
                     reply(id, JsonNull)
                 }
                 "\$/ij/debug/indexing" -> {
@@ -165,6 +170,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             }
             put("evictions", brain.mirrors.evictions.get())
             put("saveAcks", brain.saveAcks.get())
+            put("completionRequests", brain.completionRequests.get())
             // Whether IntelliJ is the active application. A developer in Neovim
             // keeps it false; the completion test asserts it, so it cannot pass
             // in a state that would have hidden the bug.

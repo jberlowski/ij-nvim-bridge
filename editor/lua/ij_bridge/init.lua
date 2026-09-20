@@ -23,6 +23,8 @@ local reasons = {
 --- Called for every `$/ij/status` notification.
 function M.on_status(client_id, params)
   M.states[client_id] = params
+  -- What IntelliJ would have said may change when it stops or finishes indexing.
+  require('ij_bridge.blink').clear_cache()
   vim.api.nvim_exec_autocmds('User', { pattern = 'IjBridgeStatus', modeline = false, data = params })
   vim.cmd.redrawstatus()
 end

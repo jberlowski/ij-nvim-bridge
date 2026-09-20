@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics and the Indexing state are built. Incremental completion is next; see *Next* in §12.
+Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state and incremental completion are built. Next is the navigation core; see [FEATURES.md](./FEATURES.md).
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -207,6 +207,14 @@ Completion must not run inside a write action; it is scheduled via `invokeLater`
 
 `invokeCompletion` blocks the EDT for ~90% of the time to first items, so requests serialise and the synchronous part cannot be cancelled. A newer request for a buffer therefore *supersedes* an older one: at most one request in flight and one pending, newest wins. One dropped before it starts never reaches IntelliJ; one already running finishes, has its results discarded, and has its lookup hidden. `$/ij/completionCancel` is the same operation. Queue time behind a superseded request counts as Overhead.
 
+### 6.5 Incremental completion and the answer cache
+
+Typing another character sends another request, and the menu never blanks while it is in flight.
+
+- **Results are always marked incomplete**, forward and backward. blink.cmp then asks the source again on every keystroke instead of filtering the last answer with its own fuzzy matcher, so IntelliJ's matching stays authoritative (Passthrough). For an async source blink keeps showing the previous list, filtered, until the new answer arrives, so nothing flashes empty.
+- **Backspace needed more than that.** Without the cache, reusing the last answer after a backspace shows *fewer* candidates than IntelliJ would give, since it was filtered for the longer prefix. The Editor keeps a small cache (8 entries, 30 s) of finished, complete answers. The key is a hash of the buffer's text, the cursor position, and the change ticks of every other Mirrored buffer, so returning to an earlier text state is a hit and an edit anywhere IntelliJ could see changes the key. A hit skips the Brain entirely and is still marked incomplete. Degraded and capped answers are never cached; the cache is cleared when the Brain's state changes; buffers over 1 MB are not cached at all.
+- The Brain counts completion requests (`$/ij/debug/state`) and has a harness lever that slows completion down, so the tests can assert that another request went out and what the menu showed meanwhile.
+
 ## 7. Speed contract
 
 The Bridge cannot be faster than IntelliJ. What it controls is the delta it adds. **Overhead is gated; absolute latency is reported and never gated.** See [ADR-0005](./docs/adr/0005-gate-on-bridge-overhead-not-latency.md).
@@ -225,7 +233,7 @@ OVERHEAD = (t3 − t0) − (t2 − t1)      gated
 
 *First measurement (slice 1, 402 items, in-container, `test_overhead_stays_inside_the_budget`): OVERHEAD median 1.5 ms, p95 3.4 ms, against IntelliJ's own 110 ms median and 132 ms p95. The measurement stops at the socket.*
 
-*With Neovim in the loop (slice 2: request leaves nvim, the Brain answers, blink.cmp has been handed the items; IntelliJ in the background, Neovim focused): OVERHEAD median 1.4 ms and p95 1.7–2.2 ms, against IntelliJ's 75–86 ms. blink.cmp's own drawing is not in it, and 842-item results were not measured. The 15 ms budget holds with room; it is not the constraint.*
+*With Neovim in the loop (slice 2: request leaves nvim, the Brain answers, blink.cmp has been handed the items; IntelliJ in the background, Neovim focused): OVERHEAD median 1.4–2.3 ms and p95 1.7–3.9 ms across runs, against IntelliJ's 75–86 ms. The upper figures are with the answer cache (§6.5), whose key hashes the buffer on every request. blink.cmp's own drawing is not in it, and 842-item results were not measured. The 15 ms budget holds with room; it is not the constraint.*
 
 A slow IntelliJ — cold index, large project, loaded machine — must never fail the build. That number belongs to IntelliJ, not to the Bridge.
 
@@ -325,10 +333,9 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 **The full feature set** - navigation, symbols, formatting, code actions, rename, hierarchies, inlay hints, project extensions - is specified in [FEATURES.md](./FEATURES.md), with the order to build it and the decisions it needs first.
 
-**Next.** Written down, not built.
+**Next.**
 
-- **Incremental completion.** Typing one more character must send a new request *and* immediately filter the results already returned, rather than starting from an empty menu. The Brain already re-requests (`is_incomplete_forward`); what is missing is showing the filtered previous items while the new answer is in flight, so the menu never blanks or flickers. IntelliJ's matching stays authoritative: the filtered set is a placeholder that the new answer replaces, never a substitute for it.
-- **A small cache of recent answers in the Editor.** Backspacing should give the earlier result at once. Keyed by buffer, position and prefix, and valid only while the buffer has not changed elsewhere (`changedtick`), since any edit can change what IntelliJ would say. Small and short-lived, so that a stale answer is never worse than waiting.
+Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. What comes next is the navigation core in [FEATURES.md](./FEATURES.md) §11.
 
 **Deferred.** Bidirectional caret following · run configurations · refactorings beyond rename · licensed-tier harness profile and deep Spring assertions.
 

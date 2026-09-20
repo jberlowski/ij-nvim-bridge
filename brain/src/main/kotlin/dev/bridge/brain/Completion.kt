@@ -33,6 +33,11 @@ import java.util.concurrent.atomic.AtomicReference
  * request for a buffer therefore *supersedes* an older one instead: at most one
  * in flight and one queued per buffer, newest wins (SPEC.md §6.4).
  */
+/** Harness only: slow completion down so an in-flight request can be observed. */
+object DebugLevers {
+    @Volatile var completionDelayMs = 0L
+}
+
 class CompletionEngine(private val project: Project) : Disposable {
 
     class Request(
@@ -128,6 +133,7 @@ class CompletionEngine(private val project: Project) : Disposable {
         // in-progress lookup, if there is one, gives early batches.
         val finished = AtomicReference<List<LookupElement>?>(null)
 
+        if (DebugLevers.completionDelayMs > 0) Thread.sleep(DebugLevers.completionDelayMs)
         val tInvoke = System.nanoTime()
         val deadline = tInvoke + r.lateWaitMs * 1_000_000L
         var first: Snap? = null

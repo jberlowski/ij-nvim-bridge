@@ -47,6 +47,9 @@ class BrainService(private val project: Project) : Disposable {
     /** Save handshakes acknowledged: the Editor really ran §5.4 before a write. */
     val saveAcks = java.util.concurrent.atomic.AtomicInteger()
 
+    /** Completion requests received, including degraded ones: proves the Editor asked again. */
+    val completionRequests = java.util.concurrent.atomic.AtomicInteger()
+
     val mirrors = MirrorSet(project).also { Disposer.register(this, it) }
     val completion = CompletionEngine(project).also { Disposer.register(this, it) }
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
