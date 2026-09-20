@@ -27,6 +27,7 @@ The distinction that justifies this project: the Brain is a **running, configure
 |---|---|
 | [CONTEXT.md](./CONTEXT.md) | Glossary. Terms are used precisely; read this first. |
 | [SPEC.md](./SPEC.md) | Feature set, protocol, contracts, v1/v2 split, the Spike. |
+| [FEATURES.md](./FEATURES.md) | Everything beyond the v1 spine that makes it a full language server: navigation, edits, refactoring, IDE extensions, in build order. |
 | [HARNESS.md](./HARNESS.md) | Development harness: container, observability, assertions. |
 | [docs/adr/](./docs/adr/) | Why the design is the way it is — including where it diverges from Comrade. |
 

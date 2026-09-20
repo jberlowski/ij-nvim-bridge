@@ -315,6 +315,8 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 - `textDocument/hover`, `definition`, `codeAction`
 - IntelliJ on-save actions as explicit commands
 
+**The full feature set** - navigation, symbols, formatting, code actions, rename, hierarchies, inlay hints, project extensions - is specified in [FEATURES.md](./FEATURES.md), with the order to build it and the decisions it needs first.
+
 **Next.** Written down, not built.
 
 - **Incremental completion.** Typing one more character must send a new request *and* immediately filter the results already returned, rather than starting from an empty menu. The Brain already re-requests (`is_incomplete_forward`); what is missing is showing the filtered previous items while the new answer is in flight, so the menu never blanks or flickers. IntelliJ's matching stays authoritative: the filtered set is a placeholder that the new answer replaces, never a substitute for it.
