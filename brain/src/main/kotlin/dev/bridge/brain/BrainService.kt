@@ -44,6 +44,9 @@ class BrainService(private val project: Project) : Disposable {
     private var socketPath: Path? = null
     private var root: String? = null
 
+    /** Save handshakes acknowledged: the Editor really ran §5.4 before a write. */
+    val saveAcks = java.util.concurrent.atomic.AtomicInteger()
+
     val mirrors = MirrorSet(project).also { Disposer.register(this, it) }
     val completion = CompletionEngine(project).also { Disposer.register(this, it) }
 
@@ -105,6 +108,17 @@ class BrainService(private val project: Project) : Disposable {
 
     fun capabilities(): JsonObject = buildJsonObject {
         // Passthrough: advertise only what this Brain has proven it can answer.
+        // Standard LSP, so Neovim's own client does the syncing: without
+        // textDocumentSync it sends no didChange, and without willSaveWaitUntil
+        // it never runs the save handshake (SPEC.md §5.4).
+        put("positionEncoding", "utf-16")
+        put("textDocumentSync", buildJsonObject {
+            put("openClose", true)
+            put("change", 2) // incremental
+            put("willSave", false)
+            put("willSaveWaitUntil", true)
+            put("save", buildJsonObject { put("includeText", false) })
+        })
         put("completion", buildJsonObject { put("streaming", true) })
         put("diagnostics", false)
         put("formatting", false)

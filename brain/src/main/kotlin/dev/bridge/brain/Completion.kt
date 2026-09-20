@@ -1,6 +1,7 @@
 package dev.bridge.brain
 
 import com.intellij.codeInsight.completion.CodeCompletionHandlerBase
+import com.intellij.codeInsight.completion.CompletionService
 import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.lookup.LookupElement
 import com.intellij.codeInsight.lookup.LookupElementPresentation
@@ -36,6 +37,8 @@ class CompletionEngine(private val project: Project) : Disposable {
         val uri: String,
         val position: JsonObject,
         val streamId: String,
+        /** Harness only: how long to keep waiting for a lookup that has not appeared. */
+        val lateWaitMs: Long = 0,
         /** t1 of SPEC.md §7: stamped when the request has arrived. */
         val received: Long,
         val transport: Transport,
@@ -101,9 +104,7 @@ class CompletionEngine(private val project: Project) : Disposable {
                 // hold the next request in the queue behind the popup's teardown
                 // - measured as ~13 ms of Overhead. The next request hides any
                 // stale lookup itself, before it invokes completion.
-                ApplicationManager.getApplication().invokeLater {
-                    LookupManager.hideActiveLookup(project)
-                }
+                ApplicationManager.getApplication().invokeLater { LookupManager.hideActiveLookup(project) }
             }
         }
     }
@@ -119,7 +120,7 @@ class CompletionEngine(private val project: Project) : Disposable {
         val sent: MutableSet<LookupElement> = Collections.newSetFromMap(IdentityHashMap())
 
         val tInvoke = System.nanoTime()
-        val first = edt {
+        var first = edt {
             LookupManager.hideActiveLookup(project)
             val doc = mirror.document
             mirror.editor.caretModel.moveToOffset(MirrorSet.offset(doc, r.position))
@@ -128,8 +129,32 @@ class CompletionEngine(private val project: Project) : Disposable {
         }
         if (r.superseded) { finishSuperseded(r); return }
 
+        // Optionally keep waiting for a lookup that has not appeared (harness
+        // only; the default is not to wait). When none comes, `diag` says why.
+        var processSeen = false
+        var pollsWaited = 0
+        while (first == null && pollsWaited * POLL_MS * 5 < r.lateWaitMs && !r.superseded) {
+            Thread.sleep(POLL_MS * 5)
+            pollsWaited++
+            val (snap, process) = edt {
+                snapshot(mirror.editor, sent) to (CompletionService.getCompletionService().currentCompletion != null)
+            }
+            first = snap
+            processSeen = processSeen || process
+        }
         if (first == null) { // IntelliJ produced no lookup: nothing to offer here
-            respond(r, emptyList(), done = true, incomplete = false, tInvoke = tInvoke, snap = null)
+            val diag = edt {
+                buildJsonObject {
+                    // While the IDE is not the active application IntelliJ completes
+                    // nothing (docs/adr/0008, amendment). This makes that visible.
+                    put("appActive", ApplicationManager.getApplication().isActive)
+                    put("editorShowing", mirror.editor.contentComponent.isShowing)
+                    put("completionProcessSeen", processSeen)
+                    put("waitedMs", pollsWaited * POLL_MS * 5)
+
+                }
+            }
+            respond(r, emptyList(), done = true, incomplete = false, tInvoke = tInvoke, snap = null, diag = diag)
             return
         }
         val tFirstSent = System.nanoTime()
@@ -168,7 +193,7 @@ class CompletionEngine(private val project: Project) : Disposable {
     }
 
     private fun respond(r: Request, items: List<JsonObject>, done: Boolean, incomplete: Boolean,
-                        tInvoke: Long, snap: Snap?) {
+                        tInvoke: Long, snap: Snap?, diag: JsonObject? = null) {
         val tSend = System.nanoTime()
         r.responded = true
         r.transport.send(Wire.response(r.id, buildJsonObject {
@@ -176,6 +201,7 @@ class CompletionEngine(private val project: Project) : Disposable {
             put("items", JsonArray(items))
             put("done", done)
             put("isIncomplete", incomplete)
+            if (diag != null) put("diag", diag)
             put("timings", buildJsonObject {
                 // Queue time behind a superseded request is Overhead, not
                 // IJ_TIME (ADR-0008): IJ_TIME starts when invokeCompletion does.
@@ -234,3 +260,4 @@ class CompletionEngine(private val project: Project) : Disposable {
         const val POLL_MS = 10L
     }
 }
+

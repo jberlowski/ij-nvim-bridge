@@ -69,7 +69,10 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 // writes. Messages are handled in order, so by the time this reply
                 // exists every earlier didChange has been applied. The reply is
                 // an empty edit list - the Brain never edits on save (v2).
-                "textDocument/willSaveWaitUntil" -> reply(id, JsonArray(emptyList()))
+                "textDocument/willSaveWaitUntil" -> {
+                    brain.saveAcks.incrementAndGet()
+                    reply(id, JsonArray(emptyList()))
+                }
                 "textDocument/didSave" -> {
                     val doc = params.obj("textDocument")
                     brain.mirrors.saved(doc.str("uri"), doc.intOr("version", -1))
@@ -81,6 +84,8 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     brain.completion.submit(CompletionEngine.Request(
                         id = id, uri = uri, position = params.obj("position"),
                         streamId = UUID.randomUUID().toString().take(8),
+                        lateWaitMs = params["lateWaitMs"]?.jsonPrimitive?.intOrNull?.toLong()
+                            ?: 0L,
                         received = received, transport = transport,
                         mirror = { brain.mirrors.get(uri) },
                     ))
@@ -124,6 +129,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             put("capabilities", brain.capabilities())
             put("state", brain.state())
             put("evictions", brain.mirrors.evictions.get())
+            put("saveAcks", brain.saveAcks.get())
             put("lookupActive", brain.lookupActive())
             put("mirrors", JsonArray(brain.mirrors.all().map { m ->
                 buildJsonObject {
@@ -131,6 +137,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     put("version", m.version)
                     put("convergent", m.convergent)
                     put("open", brain.mirrors.isOpen(m))
+                    put("showing", edt { m.editor.contentComponent.isShowing })
                     put("length", edt { m.document.textLength })
                     if (withText) put("text", edt { m.document.charsSequence.toString() })
                 }
