@@ -1,0 +1,17 @@
+<idea-plugin>
+    <id>dev.bridge.brain</id>
+    <name>IJ-Nvim Bridge (Brain)</name>
+    <vendor>ij-nvim-bridge</vendor>
+
+    <description><![CDATA[
+      The Brain half of the Bridge: lets Neovim borrow this IDE's code
+      intelligence over an unprivileged unix socket. See SPEC.md.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="dev.bridge.brain.BrainStartup"/>
+        <fileDocumentSynchronizationVetoer implementation="dev.bridge.brain.MirrorVetoer"/>
+    </extensions>
+</idea-plugin>

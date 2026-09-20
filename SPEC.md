@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **pre-implementation.** Nothing here may be built until the Spike (§10) passes.
+Status: **first vertical slice built.** The Spike (§11) has passed. The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin, diagnostics and surfacing Indexing to the developer are not yet built.
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -79,6 +79,7 @@ Standard methods used in v1:
 ```
 initialize · initialized · shutdown · exit
 textDocument/didOpen · didChange · didSave · didClose
+textDocument/willSaveWaitUntil      the save handshake's ack (§5.4)
 textDocument/completion
 textDocument/publishDiagnostics
 ```
@@ -160,6 +161,10 @@ BufWritePre
 
 The handshake exists because a conflict is only possible if Mirror and disk *diverge*. Establishing Convergence before the write makes divergence structurally impossible, which is why `:w` needs no cooperation from IntelliJ's save machinery.
 
+The ack is `textDocument/willSaveWaitUntil`. Messages are handled in order, so the reply exists only once every earlier `didChange` has been applied; its result is an empty edit list.
+
+Convergence alone does not stop IntelliJ reacting to the write: unsaved documents trigger a modal conflict dialog and are autosaved. The Brain vetoes both for Mirrors. See the amendment to [ADR-0003](./docs/adr/0003-editor-owns-disk-writes.md).
+
 If the Brain is absent, Dormant, or the ack times out, `:w` proceeds as a plain local write. `:w` must never fail or block because of the Bridge.
 
 **Not included:** IntelliJ's on-save actions (reformat-on-save, optimize-imports-on-save) do not fire. They arrive in v2 as explicit commands.
@@ -215,7 +220,9 @@ IJ_TIME  = t2 − t1                    reported every run, never gated
 OVERHEAD = (t3 − t0) − (t2 − t1)      gated
 ```
 
-**Gate:** `p95 OVERHEAD < 15ms` **and** no regression against a recorded baseline. *(15 ms remains provisional: the Spike measured `IJ_TIME` — 178–349 ms warm median — but cannot measure Bridge overhead before a Bridge exists. 15 ms is 4–8% of that; revisit at the first Bridge measurement.)*
+**Gate:** `p95 OVERHEAD < 15ms` **and** no regression against a recorded baseline.
+
+*First measurement (slice 1, 402 items, in-container, `test_overhead_stays_inside_the_budget`): OVERHEAD median 1.5 ms, p95 3.4 ms, against IntelliJ's own 110 ms median and 132 ms p95. The measurement stops at the socket. Neovim's scheduling and blink.cmp's render are not yet in it, and 842-item results were not measured for overhead. Keep 15 ms until the Editor is in the loop.*
 
 A slow IntelliJ — cold index, large project, loaded machine — must never fail the build. That number belongs to IntelliJ, not to the Bridge.
 
@@ -247,8 +254,9 @@ Exists for the harness and for development. Not a user feature in v1.
 
 ```
 $/ij/caret        S→C  { uri, position }      Mirror caret moved
-$/ij/debug/state  req  → { project, capabilities, state,
-                           mirrors: [{ uri, version, caret, convergent }] }
+$/ij/debug/state  req  → { project, capabilities, state, evictions, lookupActive,
+                           mirrors: [{ uri, version, convergent, open, length }] }
+$/ij/debug/setTabLimit · saveAll   harness-only levers (provoke the tab limit; do what an idle IDE does)
 ```
 
 Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor in response. Bidirectional caret following is deferred — it is nearly free given real editors, but it is a distraction from the dealbreakers.
@@ -324,7 +332,7 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 ## 14. Open
 
-- **Overhead budget of 15ms p95 is a guess.** Replace with a measured figure once the Spike records a baseline.
+- **Overhead budget of 15ms p95** now has a first measurement (§7), but not one that includes the Editor. Confirm or replace once it does.
 - **Coalescing intervals** (30ms completion, 150ms diagnostics) are guesses, to be tuned against the harness.
 - **How the Brain detects an import in flight.** The harness reads `idea.log`, which the Brain cannot. Candidate: the external-system processing manager's in-progress `RESOLVE_PROJECT` task. Unverified, and it may need a plugin dependency on the Gradle integration.
 - **Multiple nvim instances against one project** — several Sessions on one socket. Expected to work; untested.

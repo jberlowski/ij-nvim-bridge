@@ -222,6 +222,18 @@ Across relaunches in one container, `grep` for a marker line matches the *previo
 
 `Rpc.stringField` turned `\n` into a literal `n`, so a probe inserted `nval x = …` and completion ran in a spelling/comment context, returning *"Save 'nval' to dictionary"*. Plausible-looking items from the wrong position. Fixed on the `spike/q2-q6-probes` branch; the Bridge uses `kotlinx.serialization` and does not carry this risk.
 
+### A modal dialog is a dead Brain, and the guard is a fixture
+
+Concretely: IntelliJ's *"Changes have been made to … in memory and on disk"* dialog held the EDT and turned a 24-test suite into ten minutes of 30-second timeouts, each looking like a different bug. The `wire` fixture now probes the Brain with a 15-second timeout and fails once, early, with the screenshot; the failure hook captures setup and teardown failures as well as the test body, since that is where a blocked EDT surfaces. Why the dialog appears, and what the Brain does about it: ADR-0003, amendment.
+
+### `Brain.bridge()` lied twice
+
+A host-side `connect()` proves nothing about socat: Docker's port forwarder accepts TCP before socat has bound, so the old readiness probe passed and the first real connection was reset. It now asks from *inside* the container. Separately, socat listened on the **host** port number inside the container, which was invisible while both were 7878 and made a second container, on other ports, bridge nothing. The container-side port is now the constant `BRIDGE_TCP_PORT`.
+
+### The Brain and the canary cannot share an IDE
+
+Both publish a Registry and a socket for the same Project Root. The Bridge tests get their own container (`bridge_container`, other host ports) and the canary suite keeps its own. Build both: `make canary brain`.
+
 ## 14. Open
 
 - **Terminal emulator fidelity.** `xterm` is scriptable and works, but it has not been checked whether blink.cmp's completion popup renders there as it would for a real user. If it does not, the visual half of observability is misleading for precisely the feature that matters most.

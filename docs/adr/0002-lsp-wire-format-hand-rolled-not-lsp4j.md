@@ -19,3 +19,5 @@ LSP framing is a `Content-Length` header and a JSON body, and only the methods a
 The streaming completion extension is first-class rather than bolted onto a generated typed API, which matters because streaming is the feature the whole design is organised around.
 
 Any LSP client gets non-streaming completion, diagnostics and formatting for free. That is a side effect, not a goal, and must never constrain a design decision.
+
+`kotlinx.serialization` is **bundled with the plugin**, not taken from the platform. The IDE carries a copy as a library module, but with internal visibility: a third-party plugin that declares a dependency on it is refused at load. The Kotlin stdlib is excluded from the bundle, since the platform supplies it.
