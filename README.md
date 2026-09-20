@@ -48,7 +48,7 @@ The distinction that justifies this project: the Brain is a **running, configure
 - **Passthrough**: never reimplement what the connected IDE lacks ([ADR-0004](./docs/adr/0004-passthrough-no-polyfills.md))
 - Speed is gated on **Bridge overhead**, never on absolute latency ([ADR-0005](./docs/adr/0005-gate-on-bridge-overhead-not-latency.md))
 - The harness is **Mac-local** and never runs on the target box ([ADR-0006](./docs/adr/0006-harness-is-a-mac-local-container.md))
-- **Latest IntelliJ only**, no compatibility range ([ADR-0007](./docs/adr/0007-target-latest-intellij-only.md))
+- Support the **current IntelliJ major** only, bounded to the branch ([ADR-0007](./docs/adr/0007-support-the-current-intellij-major.md))
 
 ## Target
 

@@ -128,9 +128,11 @@ Python is deliberately a **third** language. A Kotlin harness could import the B
 
 ## 9. Version pinning
 
-The image pins an exact IntelliJ build — `262.10968.63` — even though the project targets latest-only ([ADR-0007](./docs/adr/0007-target-latest-intellij-only.md)). Latest-only is a *policy about which version we support*; the harness still needs a *fixed* version, or a rebuilt image could change behaviour with no corresponding change in the repository, and the overhead baseline would drift for reasons nothing recorded.
+The plugin supports the whole current major branch — `262.*` ([ADR-0007](./docs/adr/0007-support-the-current-intellij-major.md)). The image pins one exact build within it: `262.10968.63`.
 
-Bumping it is a deliberate commit. An IntelliJ upgrade breaking the plugin is expected rather than exceptional, and re-running the Spike's assumptions against a new build is precisely what the harness exists to do.
+These are different concerns. The supported *range* is a policy about which IDEs the Bridge works with. A reproducible *test environment* needs a fixed point, or a rebuilt image could change behaviour with nothing in the repository recording why, and the overhead baseline would shift for unattributable reasons.
+
+Bumping the pin is a deliberate commit. Within the major it should be uneventful; across a major it is the moment the Spike's assumptions about IntelliJ internals get re-tested, which is a large part of why the harness exists.
 
 The JDK, Gradle, Neovim and LazyVim versions are pinned for the same reason.
 

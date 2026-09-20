@@ -59,7 +59,7 @@ $XDG_RUNTIME_DIR/ij-nvim-bridge/        ← fallback: $HOME/.ij-nvim-bridge/
 {
   "version": 1,
   "brains": [
-    { "root": "/home/j/work/alpha", "sock": "a3f1c2.sock", "pid": 4411, "ide": "IU-2025.3" }
+    { "root": "/home/j/work/alpha", "sock": "a3f1c2.sock", "pid": 4411, "ide": "IU-2026.2" }
   ]
 }
 ```
@@ -103,7 +103,7 @@ The Brain reports Capabilities at `initialize`, derived from what the *connected
     "completion": { "streaming": true },
     "diagnostics": true,
     "formatting": false,
-    "ij": { "ide": "IU-2025.3", "tier": "free", "optimizeImports": true }
+    "ij": { "ide": "IU-2026.2", "tier": "free", "optimizeImports": true }
 } }
 ```
 
@@ -295,7 +295,7 @@ Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor 
 |---|---|---|
 | Brain | Kotlin, Gradle, IntelliJ Platform Gradle Plugin 2.x | |
 | Brain wire | hand-rolled JSON-RPC + `kotlinx.serialization` | [ADR-0002](./docs/adr/0002-lsp-wire-format-hand-rolled-not-lsp4j.md) |
-| IntelliJ | **Latest only — 2026.2, build `262`** | No compatibility range. Newest APIs are fair game. [ADR-0007](./docs/adr/0007-target-latest-intellij-only.md) |
+| IntelliJ | **Current major — 2026.2** | `sinceBuild 262` / `untilBuild 262.*`. Patches need no action; a new major is the maintenance event. [ADR-0007](./docs/adr/0007-support-the-current-intellij-major.md) |
 | Editor | Lua, nvim **0.11+** | `vim.lsp.rpc.connect(path)` handles the unix socket natively |
 | Completion UI | blink.cmp (LazyVim default since v14) | nvim-cmp and `vim.lsp.completion` work via the fallback door |
 | Harness | Python + pytest, OCI container via OrbStack | [HARNESS.md](./HARNESS.md) · [ADR-0006](./docs/adr/0006-harness-is-a-mac-local-container.md) |
