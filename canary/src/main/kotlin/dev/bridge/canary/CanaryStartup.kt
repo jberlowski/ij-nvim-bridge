@@ -88,8 +88,12 @@ class CanaryServer(private val project: Project, private val root: String) {
             val input = Channels.newInputStream(conn)
             val output = Channels.newOutputStream(conn)
             while (true) {
-                val received = System.nanoTime()
                 val msg = Rpc.readMessage(input) ?: return
+                // t1 of SPEC.md §7 is when the request has arrived, not when we
+                // began waiting for it. Stamping before the blocking read put
+                // the client's own connect and send time into "in-IDE" time,
+                // which could exceed the round trip and make OVERHEAD negative.
+                val received = System.nanoTime()
                 val method = Rpc.stringField(msg, "method") ?: "?"
                 val id = Rpc.stringField(msg, "id") ?: "0"
                 // Never let a throwing handler close the connection silently:

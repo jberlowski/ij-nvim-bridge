@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass
 
 from .container import Container
+from .ide import Ide
 
 REGISTRY_DIR = "/run/user/1000/ij-nvim-bridge"
 BRIDGE_TCP_PORT = 7878
@@ -129,25 +130,36 @@ class Brain:
         raise TimeoutError(f"socat bridge to {sock_path} never accepted on :{self.port}")
 
     # ---------------------------------------------------------------- readiness
-    def await_ready(self, sock_path: str, timeout: float = 900.0) -> None:
+    def await_ready(self, sock_path: str, timeout: float = 900.0,
+                    synced_after: int = 0) -> None:
         """Block until the Brain can actually answer.
 
         A window titled after the project appears long before the project is
         usable: IntelliJ still has to import the Gradle build and then index.
-        Readiness is therefore "not Indexing, twice running" (SPEC.md §8), not
-        "a window exists" — waiting on the window was the original bug here.
+        Not-Indexing alone is not enough either - it is reached while the
+        import is still in flight, when diagnostics come back as "Not resolved
+        until the project is fully loaded" and completion resolves nothing
+        (HARNESS.md §13). Ready therefore means:
+
+          1. a Gradle import has committed its model since `synced_after`
+             imports had (idea.log is appended across relaunches), and
+          2. not Indexing, twice running (SPEC.md §8), *after* that.
         """
+        ide = Ide(self.c)
         deadline = time.monotonic() + timeout
         consecutive = 0
         last = "never answered"
         while time.monotonic() < deadline:
             try:
-                state = self.request_local(sock_path, "$/canary/state")[0]["result"]
-                last = state.get("indexing", "?")
-                # A JSON boolean, not a string: Rpc.obj emits raw values.
-                consecutive = consecutive + 1 if last is False else 0
-                if consecutive >= 2:
-                    return
+                if ide.sync_commits() <= synced_after:
+                    last, consecutive = "Gradle import not committed", 0
+                else:
+                    state = self.request_local(sock_path, "$/canary/state")[0]["result"]
+                    last = state.get("indexing", "?")
+                    # A JSON boolean, not a string: Rpc.obj emits raw values.
+                    consecutive = consecutive + 1 if last is False else 0
+                    if consecutive >= 2:
+                        return
             except Exception as exc:  # noqa: BLE001 - the IDE may be mid-import
                 last = f"{type(exc).__name__}: {exc}"
                 consecutive = 0

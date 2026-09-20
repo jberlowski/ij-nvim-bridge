@@ -11,6 +11,13 @@ CONFIG = "/home/dev/.config/JetBrains/IntelliJIdea2026.2"
 PLUGINS = "/home/dev/.local/share/JetBrains/IntelliJIdea2026.2"
 LOG = "/home/dev/.cache/JetBrains/IntelliJIdea2026.2/log/idea.log"
 
+# The last thing a Gradle import does to the project model. Until this line is
+# in the log the project has no resolved source roots or classpath, and the
+# daemon reports "Not resolved until the project is fully loaded" instead of
+# real errors (HARNESS.md §13). Keyed to the pinned IDE build; a new major may
+# reword it, and test_ready_means_gradle_synced will say so.
+SYNC_COMMITTED = "Project model for project .*External system: commit model"
+
 # Trusting a project means IntelliJ will execute its build scripts. The fixture
 # is authored in this repository, so this is not a judgement about third-party
 # code — but it is still a security setting, recorded here rather than buried.
@@ -74,6 +81,14 @@ class Ide:
         raise TimeoutError(
             f"no window matching {needles!r} within {timeout}s; saw: {seen}"
         )
+
+    def sync_commits(self) -> int:
+        """How many Gradle imports have committed their model. idea.log is
+        appended across relaunches, so callers waiting for a *new* import
+        compare against a count taken before launching."""
+        out = self.c.exec(f"grep -c '{SYNC_COMMITTED}' {LOG} 2>/dev/null",
+                          check=False).stdout.strip()
+        return int(out or 0)
 
     def log_tail(self, lines: int = 60) -> str:
         return self.c.exec(f"tail -{lines} {LOG} 2>/dev/null", check=False).stdout

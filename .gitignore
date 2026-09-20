@@ -8,3 +8,4 @@ fixture/gradlew.bat
 __pycache__/
 *.pyc
 canary/.intellijPlatform/
+.idea/

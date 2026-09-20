@@ -210,7 +210,7 @@ A corollary worth keeping: **any modal or EDT-holding dialog will look like a Br
 
 Both found during the Spike; both produced plausible wrong answers.
 
-**Readiness.** `indexing == False` twice running is reached while the Gradle sync is still in flight. Diagnostics run in that window return *"Not resolved until the project is fully loaded"* (INFORMATION) instead of *Unresolved reference* (ERROR). The gate that worked: wait for `Project model for project spring-kotlin-mvc … External system: commit model` in `idea.log`, then a further ~30 s. `Brain.await_ready` should adopt it.
+**Readiness.** `indexing == False` twice running is reached while the Gradle sync is still in flight. Diagnostics run in that window return *"Not resolved until the project is fully loaded"* (INFORMATION) instead of *Unresolved reference* (ERROR). The gate that worked: wait for `Project model for project spring-kotlin-mvc … External system: commit model` in `idea.log`, then a further ~30 s. `Brain.await_ready` now requires it (`Ide.sync_commits`), and `test_ready_means_gradle_synced` fails without it. The marker is keyed to the pinned build; a new IDE major may reword it.
 
 **Relaunching.** `Ide.quit()` followed by `pkill` and a relaunch brings IntelliJ up with **no module model and no source roots** — the project tree shows `fixture` rather than `fixture [spring-kotlin-mvc]`, the editor gutter says `OFF`, the daemon returns zero highlights, and completion resolves nothing. It does not re-sync. Every symptom looks like an IntelliJ or Kotlin limitation. Screenshot first: the project tree gave it away. Use a fresh container per plugin change; do not restart in place.
 

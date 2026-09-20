@@ -207,6 +207,15 @@ class TestBrainIntrospection:
             time.sleep(5)
         pytest.fail("IntelliJ never left Indexing within 600s")
 
+    def test_ready_means_gradle_synced(self, ide, brain):
+        """HARNESS.md §13: "not indexing" is reached mid-import. A Brain that
+        calls itself ready then serves *Not resolved until the project is fully
+        loaded* in place of real diagnostics, and completion resolves nothing.
+        Readiness must therefore include the import having committed."""
+        assert ide.sync_commits() > 0, (
+            "Brain.await_ready returned before the Gradle import committed its "
+            "model - or the log line changed (harness/ide.py SYNC_COMMITTED)")
+
     def test_plugin_can_open_a_real_editor(self, brain, brain_socket):
         """SPEC.md §11 question 1 — ADR-0001's premise, cheapest probe."""
         brain.bridge(brain_socket)
