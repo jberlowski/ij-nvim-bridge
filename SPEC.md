@@ -193,11 +193,13 @@ At the cap, the stream closes with `isIncomplete: true`; the next keystroke re-r
 
 ### 6.3 Harvesting
 
-Preferred: drive `CodeCompletionHandlerBase` and collect `LookupElement`s.
-
-Agreed fallback if items cannot be obtained without the lookup UI: **let IntelliJ show its own popup in the Mirror's editor**, read `LookupManager.getActiveLookup(editor).getItems()`, then `hideLookup()`. The popup appears in the IntelliJ window, which is harmless — the developer is looking at nvim — and is useful in the harness's noVNC view. This uses IntelliJ's real path, so ranking and settings are exactly right, which Passthrough requires.
+Drive `CodeCompletionHandlerBase` on the Mirror's editor, read the candidates from the `LookupImpl` it creates, then `hideActiveLookup`. This is the primary path, not a fallback: the handler does not return items, only a lookup does. It runs on an editor that is not the focus owner, and the popup appears in the IntelliJ window, which is harmless while the developer looks at nvim and useful in the harness's noVNC view. See [ADR-0008](./docs/adr/0008-completion-is-harvested-from-the-lookup.md).
 
 Completion must not run inside a write action; it is scheduled via `invokeLater`.
+
+### 6.4 Supersession
+
+`invokeCompletion` blocks the EDT for ~90% of the time to first items, so requests serialise and the synchronous part cannot be cancelled. A newer request for a buffer therefore *supersedes* an older one: at most one request in flight and one pending, newest wins. One dropped before it starts never reaches IntelliJ; one already running finishes, has its results discarded, and has its lookup hidden. `$/ij/completionCancel` is the same operation. Queue time behind a superseded request counts as Overhead.
 
 ## 7. Speed contract
 
@@ -222,10 +224,10 @@ A slow IntelliJ — cold index, large project, loaded machine — must never fai
 | State | Meaning | Behaviour |
 |---|---|---|
 | **Dormant** | Buffer matches no Project Root | Bridge invisible. nvim entirely normal. |
-| **Indexing** | Brain present, rebuilding indices | Completion: dumb-aware items only, marked Degraded. Diagnostics: **withheld**. State visible in statusline. |
+| **Indexing** | Brain present, rebuilding indices **or importing the build model** | Completion: dumb-aware items only, marked Degraded. Diagnostics: **withheld**. State visible in statusline. |
 | **Ready** | Brain answering normally | Full advertised Capabilities. |
 
-Indexing happens several times a day on a real Java project — project open, `git pull`, Gradle sync — and can last minutes. It is always visible and never silent. On exit from Indexing the Brain re-publishes diagnostics for every Mirror.
+Indexing happens several times a day on a real Java project — project open, `git pull`, Gradle sync — and can last minutes. The Gradle import counts: while it is in flight `DumbService` reports not-dumb, yet the daemon returns *Not resolved until the project is fully loaded* for every reference and completion resolves nothing (HARNESS §13). Publishing those would be exactly the stale-diagnostics failure the rule below exists to prevent. It is always visible and never silent. On exit from Indexing the Brain re-publishes diagnostics for every Mirror.
 
 ## 9. Diagnostics
 
@@ -324,4 +326,5 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 - **Overhead budget of 15ms p95 is a guess.** Replace with a measured figure once the Spike records a baseline.
 - **Coalescing intervals** (30ms completion, 150ms diagnostics) are guesses, to be tuned against the harness.
+- **How the Brain detects an import in flight.** The harness reads `idea.log`, which the Brain cannot. Candidate: the external-system processing manager's in-progress `RESOLVE_PROJECT` task. Unverified, and it may need a plugin dependency on the Gradle integration.
 - **Multiple nvim instances against one project** — several Sessions on one socket. Expected to work; untested.

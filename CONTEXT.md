@@ -56,7 +56,7 @@ The Bridge's state when a buffer matches no Project Root in the Registry. Neovim
 _Avoid_: disconnected, offline, failed
 
 **Indexing**:
-The Bridge's state while the Brain is rebuilding its indices and cannot answer questions that depend on them. Distinct from Dormant: a Brain is present and will recover. Always visible to the developer, never silent.
+The Bridge's state while the Brain is rebuilding its indices or importing the project's build model, and cannot answer questions that depend on them. Distinct from Dormant: a Brain is present and will recover. Always visible to the developer, never silent.
 _Avoid_: dumb mode, busy, loading
 
 ### Answers
@@ -64,6 +64,10 @@ _Avoid_: dumb mode, busy, loading
 **Stream**:
 A sequence of progressively better answers to a single question, delivered as the Brain produces them rather than withheld until it finishes. How the Bridge reconciles a slow Brain with a fast Editor.
 _Avoid_: partial results, incremental response
+
+**Supersede**:
+For a newer question about the same buffer to replace an older one still open. The Brain cannot always interrupt work already begun, so an older question is dropped if it has not started and otherwise finished and discarded, never delivered.
+_Avoid_: cancel, abort
 
 **Cap**:
 The point at which the Bridge stops waiting for more of a Stream and closes it as Degraded. Not a promise about speed — a bound on how long one question may stay open before the Editor should ask a fresher one.
@@ -76,6 +80,13 @@ _Avoid_: latency, response time, round-trip
 **Degraded**:
 An answer known to be incomplete — because a Cap was reached or the Brain was Indexing. Always marked as such, so the Editor knows to ask again.
 _Avoid_: partial, stale, best-effort
+
+**Lookup**:
+IntelliJ's ranked list of completion candidates for one caret position. The Bridge reads answers out of it whether or not IntelliJ shows it.
+
+**Harvest**:
+Reading an answer out of a model IntelliJ maintains for its own purposes — the Lookup for completion, the daemon's markup for diagnostics — rather than out of an interface built to be called. What the Bridge does wherever no such interface exists.
+_Avoid_: scrape, poll
 
 ### Capabilities
 
