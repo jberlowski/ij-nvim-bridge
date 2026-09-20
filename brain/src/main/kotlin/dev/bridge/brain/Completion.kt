@@ -1,6 +1,8 @@
 package dev.bridge.brain
 
 import com.intellij.codeInsight.completion.CodeCompletionHandlerBase
+import com.intellij.codeInsight.completion.CompletionProcessEx
+import com.intellij.codeInsight.completion.CompletionProgressIndicator
 import com.intellij.codeInsight.completion.CompletionService
 import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.lookup.LookupElement
@@ -20,6 +22,7 @@ import kotlinx.serialization.json.put
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Streaming completion (SPEC.md §6), harvested from IntelliJ's own lookup
@@ -37,8 +40,10 @@ class CompletionEngine(private val project: Project) : Disposable {
         val uri: String,
         val position: JsonObject,
         val streamId: String,
-        /** Harness only: how long to keep waiting for a lookup that has not appeared. */
-        val lateWaitMs: Long = 0,
+        /** How long to wait for IntelliJ's first results before answering empty. A stall guard, not a
+         * latency budget: a cold first completion takes seconds, and IntelliJ's own time is never
+         * the Bridge's to cap (ADR-0005). */
+        val lateWaitMs: Long = 10_000,
         /** t1 of SPEC.md §7: stamped when the request has arrived. */
         val received: Long,
         val transport: Transport,
@@ -119,39 +124,52 @@ class CompletionEngine(private val project: Project) : Disposable {
         val mirror = r.mirror() ?: throw IllegalArgumentException("not mirrored: ${r.uri}")
         val sent: MutableSet<LookupElement> = Collections.newSetFromMap(IdentityHashMap())
 
+        // IntelliJ tells us when it is done (see FinishHandler); until then the
+        // in-progress lookup, if there is one, gives early batches.
+        val finished = AtomicReference<List<LookupElement>?>(null)
+
         val tInvoke = System.nanoTime()
-        var first = edt {
-            LookupManager.hideActiveLookup(project)
-            val doc = mirror.document
-            mirror.editor.caretModel.moveToOffset(MirrorSet.offset(doc, r.position))
-            CodeCompletionHandlerBase(CompletionType.BASIC).invokeCompletion(project, mirror.editor)
-            snapshot(mirror.editor, sent)
+        val deadline = tInvoke + r.lateWaitMs * 1_000_000L
+        var first: Snap? = null
+        var attempts = 0
+        while (first == null && !r.superseded && System.nanoTime() < deadline) {
+            attempts++
+            first = edt {
+                LookupManager.hideActiveLookup(project)
+                val doc = mirror.document
+                mirror.editor.caretModel.moveToOffset(MirrorSet.offset(doc, r.position))
+                FinishHandler { finished.set(it) }.invokeCompletion(project, mirror.editor)
+                snapshot(mirror.editor, sent, finished.get())
+            }
+            // IntelliJ sometimes declines to start a completion at all - no process,
+            // no result - most often for the first request after a file is opened.
+            // A completion that is running gets all the time it needs; one that is
+            // not running is asked for again.
+            var idleMs = 0L
+            while (first == null && !r.superseded && System.nanoTime() < deadline) {
+                Thread.sleep(POLL_MS)
+                val (snap, running) = edt {
+                    snapshot(mirror.editor, sent, finished.get()) to (inProgress() != null)
+                }
+                first = snap
+                if (first != null) break
+                idleMs = if (running) 0 else idleMs + POLL_MS
+                if (idleMs >= RETRY_AFTER_MS) break
+            }
         }
         if (r.superseded) { finishSuperseded(r); return }
 
-        // Optionally keep waiting for a lookup that has not appeared (harness
-        // only; the default is not to wait). When none comes, `diag` says why.
-        var processSeen = false
-        var pollsWaited = 0
-        while (first == null && pollsWaited * POLL_MS * 5 < r.lateWaitMs && !r.superseded) {
-            Thread.sleep(POLL_MS * 5)
-            pollsWaited++
-            val (snap, process) = edt {
-                snapshot(mirror.editor, sent) to (CompletionService.getCompletionService().currentCompletion != null)
-            }
-            first = snap
-            processSeen = processSeen || process
-        }
-        if (first == null) { // IntelliJ produced no lookup: nothing to offer here
+        if (first == null) { // IntelliJ produced nothing in time
             val diag = edt {
                 buildJsonObject {
-                    // While the IDE is not the active application IntelliJ completes
-                    // nothing (docs/adr/0008, amendment). This makes that visible.
                     put("appActive", ApplicationManager.getApplication().isActive)
                     put("editorShowing", mirror.editor.contentComponent.isShowing)
-                    put("completionProcessSeen", processSeen)
-                    put("waitedMs", pollsWaited * POLL_MS * 5)
-
+                    put("completionFinished", finished.get() != null)
+                    put("phase", com.intellij.codeInsight.completion.impl.CompletionServiceImpl
+                        .completionPhase::class.java.simpleName)
+                    put("hasProcess", CompletionService.getCompletionService().currentCompletion != null)
+                    put("dumb", com.intellij.openapi.project.DumbService.getInstance(project).isDumb)
+                    put("attempts", attempts)
                 }
             }
             respond(r, emptyList(), done = true, incomplete = false, tInvoke = tInvoke, snap = null, diag = diag)
@@ -170,7 +188,7 @@ class CompletionEngine(private val project: Project) : Disposable {
         while (last.calculating && !r.superseded) {
             if (System.nanoTime() - r.received > CAP_NANOS) { capped = true; break }
             Thread.sleep(POLL_MS)
-            last = edt { snapshot(mirror.editor, sent) } ?: break
+            last = edt { snapshot(mirror.editor, sent, finished.get()) } ?: break
             pending += last.fresh
             if (pending.isNotEmpty() && System.nanoTime() - lastEmit >= COALESCE_NANOS && last.calculating) {
                 notify(r, pending, done = false, incomplete = false)
@@ -222,16 +240,35 @@ class CompletionEngine(private val project: Project) : Disposable {
         }))
     }
 
-    /** Must run on the EDT: reads the lookup and renders each new item once. */
-    private fun snapshot(editor: Editor, sent: MutableSet<LookupElement>): Snap? {
-        val lookup = LookupManager.getActiveLookup(editor) as? LookupImpl ?: return null
+    /**
+     * Must run on the EDT: what IntelliJ has produced so far, rendered once.
+     * `finished` is the final list from FinishHandler; without it, whatever the
+     * in-progress lookup holds. Null when there is neither yet.
+     */
+    private fun snapshot(editor: Editor, sent: MutableSet<LookupElement>,
+                         finished: List<LookupElement>?): Snap? {
         val at = System.nanoTime()
-        val items = lookup.items
+        val items: List<LookupElement>
+        val calculating: Boolean
+        if (finished != null) {
+            items = finished
+            calculating = false
+        } else {
+            val lookup = inProgress() ?: return null
+            items = lookup.items
+            calculating = true
+        }
         val fresh = ArrayList<JsonObject>()
         items.forEachIndexed { index, element ->
             if (sent.add(element)) fresh += render(element, index)
         }
-        return Snap(fresh, items.size, lookup.isCalculating, at, System.nanoTime() - at)
+        return Snap(fresh, items.size, calculating, at, System.nanoTime() - at)
+    }
+
+    /** The lookup of the completion now running, shown or not. */
+    private fun inProgress(): LookupImpl? {
+        val process = CompletionService.getCompletionService().currentCompletion as? CompletionProcessEx
+        return (process?.lookup as? LookupImpl)?.takeUnless { it.isLookupDisposed }
     }
 
     private fun render(element: LookupElement, index: Int): JsonObject {
@@ -258,6 +295,27 @@ class CompletionEngine(private val project: Project) : Disposable {
         const val CAP_NANOS = 300_000_000L
         const val COALESCE_NANOS = 30_000_000L
         const val POLL_MS = 10L
+        const val RETRY_AFTER_MS = 100L
     }
 }
 
+
+/**
+ * Comrade's technique, which is why completion works while Neovim has the focus
+ * (beeender/ComradeNeovim, completion/CodeCompletionHandler.kt).
+ *
+ * The default handler finishes by *showing* a lookup, and IntelliJ shows nothing
+ * while it is not the active application - it discards the results instead. The
+ * handler does, however, announce that it is done, with the indicator still
+ * holding the items. Taking them there never depends on a visible popup.
+ *
+ * Deliberately no `super` call: it would show a popup and, for a lone candidate,
+ * *insert it into the Mirror's document*.
+ */
+@Suppress("DEPRECATION")
+private class FinishHandler(private val onFinished: (List<LookupElement>) -> Unit) :
+    CodeCompletionHandlerBase(CompletionType.BASIC, true, false, true) {
+    override fun completionFinished(indicator: CompletionProgressIndicator, hasModifiers: Boolean) {
+        onFinished(indicator.lookup.items.toList())
+    }
+}

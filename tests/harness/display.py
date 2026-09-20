@@ -60,3 +60,17 @@ class Display:
         self.c.exec(
             f"DISPLAY={self.display} xdotool type --delay 12 {shlex.quote(text)}"
         )
+
+    def focus(self, title: str, settle: float = 1.2) -> None:
+        """Give the X window whose title contains `title` the keyboard focus.
+
+        This is the difference between IntelliJ being the *active application*
+        and not - which decides whether it completes anything at all
+        (docs/adr/0008, amendment). A developer typing in Neovim keeps it
+        inactive, so tests of the real condition must focus the terminal.
+        """
+        self.c.exec(
+            f"DISPLAY={self.display} xdotool search --name '{title}' | head -1 "
+            f"| xargs -I{{}} xdotool windowactivate --sync {{}}; sleep {settle}",
+            check=False,
+        )

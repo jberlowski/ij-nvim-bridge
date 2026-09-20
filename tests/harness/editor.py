@@ -15,6 +15,9 @@ import time
 
 from .container import Container
 
+# Inside the container. Container.start publishes it on a host port of the
+# caller's choosing (Editor.port); listening on the host number here bridged
+# nothing whenever a second container ran on other ports.
 NVIM_PORT = 7777
 
 
@@ -28,7 +31,7 @@ class Editor:
         self.c.exec_detached(
             f"cd {cwd} && DISPLAY=:99 xterm -fa 'JetBrains Mono' -fs 11 "
             f"-geometry {geometry} -title 'nvim-harness' "
-            f"-e nvim --listen 0.0.0.0:{self.port}",
+            f"-e nvim --listen 0.0.0.0:{NVIM_PORT}",
             log="/home/dev/.harness/log/nvim.log",
         )
 

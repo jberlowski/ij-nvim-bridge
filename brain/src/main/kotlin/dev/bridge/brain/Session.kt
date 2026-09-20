@@ -85,7 +85,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                         id = id, uri = uri, position = params.obj("position"),
                         streamId = UUID.randomUUID().toString().take(8),
                         lateWaitMs = params["lateWaitMs"]?.jsonPrimitive?.intOrNull?.toLong()
-                            ?: 0L,
+                            ?: 10_000L,
                         received = received, transport = transport,
                         mirror = { brain.mirrors.get(uri) },
                     ))
@@ -130,6 +130,10 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             put("state", brain.state())
             put("evictions", brain.mirrors.evictions.get())
             put("saveAcks", brain.saveAcks.get())
+            // Whether IntelliJ is the active application. A developer in Neovim
+            // keeps it false; the completion test asserts it, so it cannot pass
+            // in a state that would have hidden the bug.
+            put("appActive", edt { com.intellij.openapi.application.ApplicationManager.getApplication().isActive })
             put("lookupActive", brain.lookupActive())
             put("mirrors", JsonArray(brain.mirrors.all().map { m ->
                 buildJsonObject {

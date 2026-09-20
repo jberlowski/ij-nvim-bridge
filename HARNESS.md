@@ -234,9 +234,17 @@ A host-side `connect()` proves nothing about socat: Docker's port forwarder acce
 
 Both publish a Registry and a socket for the same Project Root. The Bridge tests get their own container (`bridge_container`, other host ports) and the canary suite keeps its own. Build both: `make canary brain`.
 
+### Which window has the focus decides what IntelliJ will do
+
+A design that reads a *shown* completion lookup returns nothing whenever IntelliJ is not the active application (ADR-0008, amendment). The Spike missed this because its container held one window; once Neovim's `xterm` holds the X focus, the same request that returned 402 items returns none. The Brain now takes the items from `completionFinished`, which does not care. Keep the lesson: anything that depends on IntelliJ's UI state should be tested in the state the Bridge lives in, with Neovim focused. `Display.focus` exists for that, and `$/ij/debug/state` reports `appActive` so a test can prove the condition held instead of passing vacuously.
+
+### `Editor.launch` had the same port bug as socat
+
+`nvim --listen` used the host port number inside the container. Fixed the same way: the container-side port is the constant `NVIM_PORT`.
+
 ## 14. Open
 
-- **Terminal emulator fidelity.** `xterm` is scriptable and works, but it has not been checked whether blink.cmp's completion popup renders there as it would for a real user. If it does not, the visual half of observability is misleading for precisely the feature that matters most.
+- **Terminal emulator fidelity: answered.** blink.cmp's menu renders correctly in the harness `xterm`, with IntelliJ's items in IntelliJ's order and their signatures (`tests/artifacts/blink_menu.png` after the Editor suite). One flaw: the icon column is tofu, since the image carries no Nerd Font.
 - **Whether baked Gradle caches survive a reset cleanly**, or whether IntelliJ re-resolves against a new instance id.
 - **Mason's `tree-sitter-cli` install fails during the image build.** Harmless so far — treesitter parsers are irrelevant to the Bridge — but the LazyVim install is not pristine.
 - **The project name changes after Gradle sync**, from the directory name (`fixture`) to `rootProject.name` (`spring-kotlin-mvc`). Anything keying off the window title must accept both.

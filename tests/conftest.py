@@ -157,6 +157,67 @@ def wire(bridge):
         w.close()
 
 
+@pytest.fixture
+def probe(bridge):
+    """A passive Session for looking at the Brain while Neovim drives it.
+
+    Unlike `wire` it opens nothing and closes nothing, so it cannot disturb the
+    Mirrors Neovim's own Session owns.
+    """
+    from harness.wire import Wire
+    w = Wire(bridge.port)
+    w.initialize()
+    w.timeout = 15
+    try:
+        w.debug_state()
+    except Exception as exc:  # noqa: BLE001
+        w.close()
+        pytest.fail(f"the Brain is unresponsive - is a dialog holding the EDT? ({exc!r})")
+    try:
+        yield w
+    finally:
+        w.close()
+
+
+EDITOR_DIR = REPO_ROOT / "editor"
+EDITOR_GUEST = "/home/dev/ij-nvim-bridge/editor"
+
+
+@pytest.fixture(scope="session")
+def nvim_session(bridge, bridge_container):
+    """Neovim (LazyVim, blink.cmp) running the Editor plugin against the Brain."""
+    c = bridge_container
+    c.copy_in(EDITOR_DIR, EDITOR_GUEST)
+    e = Editor(c)
+    e.launch(cwd=FIXTURE_PROJECT)
+    nv = e.attach(timeout=120)
+    nv.exec_lua(f"""
+        vim.opt.rtp:prepend('{EDITOR_GUEST}')
+        require('ij_bridge').setup()
+        local blink = require('blink.cmp')
+        blink.add_source_provider('ij_bridge', {{
+          module = 'ij_bridge.blink', name = 'IntelliJ', async = true }})
+        blink.add_filetype_source('kotlin', 'ij_bridge')
+    """)
+    return nv
+
+
+@pytest.fixture(scope="session")
+def bridge_display(bridge_container):
+    return Display(bridge_container)
+
+
+@pytest.fixture
+def nvim(nvim_session):
+    """The same Neovim, with every buffer wiped before and after a test."""
+    def wipe():
+        nvim_session.command("stopinsert")
+        nvim_session.command("silent! %bwipeout!")
+    wipe()
+    yield nvim_session
+    wipe()
+
+
 # ----------------------------------------------------------------- the editor
 @pytest.fixture(scope="session")
 def editor(container):

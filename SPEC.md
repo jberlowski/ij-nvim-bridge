@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **first vertical slice built.** The Spike (§11) has passed. The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin, diagnostics and surfacing Indexing to the developer are not yet built.
+Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics and surfacing Indexing are not yet built; see *Next* in §12.
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -198,7 +198,7 @@ At the cap, the stream closes with `isIncomplete: true`; the next keystroke re-r
 
 ### 6.3 Harvesting
 
-Drive `CodeCompletionHandlerBase` on the Mirror's editor, read the candidates from the `LookupImpl` it creates, then `hideActiveLookup`. This is the primary path, not a fallback: the handler does not return items, only a lookup does. It runs on an editor that is not the focus owner, and the popup appears in the IntelliJ window, which is harmless while the developer looks at nvim and useful in the harness's noVNC view. See [ADR-0008](./docs/adr/0008-completion-is-harvested-from-the-lookup.md).
+Drive `CodeCompletionHandlerBase` on the Mirror's editor with a subclass that overrides `completionFinished` and reads `indicator.lookup.items` there, as Comrade does. No popup is shown and nothing is inserted. While completion runs, the in-progress lookup provides early batches. This works with IntelliJ in the background; reading a *shown* lookup does not, because an inactive application shows nothing. IntelliJ also sometimes declines to start, so the engine re-invokes when nothing is running. See [ADR-0008](./docs/adr/0008-completion-is-harvested-from-the-lookup.md) and its amendment.
 
 Completion must not run inside a write action; it is scheduled via `invokeLater`.
 
@@ -222,7 +222,9 @@ OVERHEAD = (t3 − t0) − (t2 − t1)      gated
 
 **Gate:** `p95 OVERHEAD < 15ms` **and** no regression against a recorded baseline.
 
-*First measurement (slice 1, 402 items, in-container, `test_overhead_stays_inside_the_budget`): OVERHEAD median 1.5 ms, p95 3.4 ms, against IntelliJ's own 110 ms median and 132 ms p95. The measurement stops at the socket. Neovim's scheduling and blink.cmp's render are not yet in it, and 842-item results were not measured for overhead. Keep 15 ms until the Editor is in the loop.*
+*First measurement (slice 1, 402 items, in-container, `test_overhead_stays_inside_the_budget`): OVERHEAD median 1.5 ms, p95 3.4 ms, against IntelliJ's own 110 ms median and 132 ms p95. The measurement stops at the socket.*
+
+*With Neovim in the loop (slice 2: request leaves nvim, the Brain answers, blink.cmp has been handed the items; IntelliJ in the background, Neovim focused): OVERHEAD median 1.4 ms and p95 1.7–2.2 ms, against IntelliJ's 75–86 ms. blink.cmp's own drawing is not in it, and 842-item results were not measured. The 15 ms budget holds with room; it is not the constraint.*
 
 A slow IntelliJ — cold index, large project, loaded machine — must never fail the build. That number belongs to IntelliJ, not to the Bridge.
 
@@ -270,7 +272,7 @@ Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor 
 | # | Question | Pass | Result |
 |---|---|---|---|
 | 1 | Can the Brain open a file as a preview-tab editor without stealing focus from the developer? | Editor exists; IDE focus unchanged | ✅ Passed. 5.3 ms warm |
-| 2 | Can completion be driven on it and `LookupElement`s harvested? | Real items returned for a fixture file | ✅ **Passed**, on an editor that is *not* the focus owner. `CodeCompletionHandlerBase(BASIC).invokeCompletion` returned 402 items for `LargeSurface().compute` (400 of them `computeMetricNumberNNN`) and 842 for `LargeSurface().`. Harvested from `LookupImpl.items`. See note below |
+| 2 | Can completion be driven on it and `LookupElement`s harvested? | Real items returned for a fixture file | ✅ **Passed**, with the IDE in the background and Neovim focused, once items are taken from `completionFinished` (amendment to ADR-0008; the first attempt, reading the shown lookup, passed only in a container with no other window). On an editor that is *not* the focus owner, `CodeCompletionHandlerBase(BASIC).invokeCompletion` returned 402 items for `LargeSurface().compute` (400 of them `computeMetricNumberNNN`) and 842 for `LargeSurface().`. Harvested from `LookupImpl.items`. See note below |
 | 3 | If not — does the lookup-model fallback (§6.3) work? | Items read from active lookup; popup dismissed | ✅ Not needed as a fallback: the handler path *is* the lookup-model path (a `LookupImpl` is created, `isShown == true`). Reading items and `hideActiveLookup` both worked, 20/20 iterations, no lingering popup |
 | 4 | Does `DaemonCodeAnalyzer` produce harvestable `HighlightInfo` for it? | *cannot resolve symbol* observed on a broken fixture | ✅ **Passed.** `ERROR` "Unresolved reference 'thisFunctionDoesNotExistAnywhere'." and `'NoSuchTypeInAnyClasspath'` from the markup model, plus daemon-only "never used" warnings. Warm: ~370 ms after `restart(psiFile)`; ~5.3 s when forced from cold |
 | 5 | What is IntelliJ's own completion time on the fixture? | Baseline recorded for the overhead gate | 📏 See *Baseline* below |
@@ -312,6 +314,12 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 - `$/ij/optimizeImports`
 - `textDocument/hover`, `definition`, `codeAction`
 - IntelliJ on-save actions as explicit commands
+
+**Next.** Written down, not built.
+
+- **Incremental completion.** Typing one more character must send a new request *and* immediately filter the results already returned, rather than starting from an empty menu. The Brain already re-requests (`is_incomplete_forward`); what is missing is showing the filtered previous items while the new answer is in flight, so the menu never blanks or flickers. IntelliJ's matching stays authoritative: the filtered set is a placeholder that the new answer replaces, never a substitute for it.
+- **A small cache of recent answers in the Editor.** Backspacing should give the earlier result at once. Keyed by buffer, position and prefix, and valid only while the buffer has not changed elsewhere (`changedtick`), since any edit can change what IntelliJ would say. Small and short-lived, so that a stale answer is never worse than waiting.
+- Diagnostics from the daemon's markup (§9) and surfacing Indexing (§8), including the Gradle import.
 
 **Deferred.** Bidirectional caret following · run configurations · refactorings beyond rename · licensed-tier harness profile and deep Spring assertions.
 

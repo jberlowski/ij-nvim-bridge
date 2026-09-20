@@ -1,0 +1,323 @@
+"""The second Bridge slice: the Neovim plugin, driven for real.
+
+A real Neovim (LazyVim, blink.cmp) runs the Editor plugin against the real Brain
+in the same container. Nothing here fakes the Editor: buffers are edited, files
+are written with `:w`, completion is requested through blink.cmp's source API.
+The Brain's side is observed through a passive second Session (`probe`).
+"""
+from __future__ import annotations
+
+import json
+import statistics
+
+import pytest
+
+from harness.util import wait_until
+from harness.wire import SRC, uri
+
+PRODUCER = f"{SRC}/probe/CrossFileProducer.kt"
+CONSUMER = f"{SRC}/probe/CrossFileConsumer.kt"
+DORMANT = "/tmp/not-in-any-project.txt"
+INSERTION = "// HARNESS-INSERTION-POINT"
+CONSUMER_MARKER = "// A test appends a call to the unsaved method here and asserts it resolves."
+
+OVERHEAD_BUDGET_MS = 15.0    # SPEC.md §7, now measured with the Editor in the loop
+
+
+def mirrors(probe) -> dict[str, dict]:
+    return {m["uri"].rsplit("/", 1)[1]: m for m in probe.debug_state(text=True)["mirrors"]}
+
+
+def buffer_text(nvim) -> str:
+    return "\n".join(nvim.current.buffer[:]) + "\n"
+
+
+def attached(nvim) -> int:
+    return nvim.exec_lua("return #vim.lsp.get_clients({bufnr = 0, name = 'ij-bridge'})")
+
+
+# Drive the blink source exactly as blink.cmp would, and wait for the whole Stream.
+COMPLETE = """
+local want = ...
+local buf = vim.api.nvim_get_current_buf()
+local source = require('ij_bridge.blink').new()
+-- Insert mode is where blink.cmp asks, and there the cursor sits *past* the last
+-- character; normal mode clamps it onto it, which would ask about the wrong spot.
+local row = vim.api.nvim_win_get_cursor(0)[1]
+local line = vim.api.nvim_get_current_line()
+local col = #line
+local ctx = { bufnr = buf, cursor = { row, col }, line = line }
+local seen, calls, first = {}, 0, nil
+local count = 0
+source:get_completions(ctx, function(r)
+  calls = calls + 1
+  for _, item in ipairs(r.items) do
+    count = count + 1
+    seen[item.label] = true
+    first = first or item.label
+  end
+end)
+-- A Stream is over when the source holds none open, not when blink is told
+-- "incomplete": a Stream cut off at the Cap is incomplete *and* finished.
+vim.wait(30000, function() return calls > 0 and require('ij_bridge.blink').active() == 0 end, 5)
+local closed = require('ij_bridge.blink').active() == 0
+local found = {}
+for _, label in ipairs(want) do found[label] = seen[label] == true end
+return { calls = calls, count = count, first = first, closed = closed, found = found,
+         last = require('ij_bridge.blink').last, at = { row, col }, line = ctx.line }
+"""
+
+
+def complete(nvim, *want: str) -> dict:
+    return nvim.exec_lua(COMPLETE, list(want))
+
+
+def go_to_end(nvim) -> None:
+    nvim.command("normal! G$")
+
+
+# ---------------------------------------------------------------- discovery
+class TestDiscovery:
+
+    def test_a_file_outside_every_project_is_dormant(self, nvim, bridge_container):
+        """SPEC.md §3: Dormant is normal, and invisible."""
+        bridge_container.write_file(DORMANT, "nothing to see\n")
+        nvim.command(f"edit {DORMANT}")
+        assert attached(nvim) == 0
+        assert nvim.exec_lua("return vim.lsp.get_clients({name = 'ij-bridge'})[1]") is None
+        assert nvim.eval("v:errmsg") == ""
+
+    def test_a_file_in_a_project_root_attaches(self, nvim, probe):
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: attached(nvim) == 1, message="the buffer never attached")
+        wait_until(lambda: "CrossFileProducer.kt" in mirrors(probe),
+                   message="the Brain never got a Mirror for this buffer")
+
+    def test_the_ij_command_says_which(self, nvim):
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: attached(nvim) == 1)
+        out = nvim.exec_lua("return vim.api.nvim_exec2('IjBridge', {output = true}).output")
+        assert "attached to /work/fixture" in out, out
+
+
+# ------------------------------------------------------------------ mirrors
+class TestMirroring:
+
+    def test_what_is_typed_reaches_the_mirror(self, nvim, probe):
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: "CrossFileProducer.kt" in mirrors(probe))
+        nvim.current.buffer.append("// typed in nvim", 0)
+        wait_until(lambda: mirrors(probe)["CrossFileProducer.kt"]["text"] == buffer_text(nvim),
+                   message="the Mirror never caught up with the buffer")
+
+    def test_leaving_a_clean_buffer_releases_its_mirror(self, nvim, probe):
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: "CrossFileProducer.kt" in mirrors(probe))
+        nvim.command(f"edit {CONSUMER}")
+        wait_until(lambda: list(mirrors(probe)) == ["CrossFileConsumer.kt"],
+                   message="the clean buffer's Mirror was not released")
+
+    def test_leaving_an_unsaved_buffer_keeps_its_mirror(self, nvim, probe):
+        """SPEC.md §5.2: the Mirror Set is the active buffer plus every buffer
+        with unsaved changes."""
+        nvim.command(f"edit {PRODUCER}")
+        nvim.current.buffer.append("// unsaved", 0)
+        nvim.command(f"hide edit {CONSUMER}")
+        wait_until(lambda: sorted(mirrors(probe)) == ["CrossFileConsumer.kt", "CrossFileProducer.kt"],
+                   message="the unsaved buffer lost its Mirror")
+
+    def test_unsaved_method_in_one_buffer_completes_in_another(
+            self, nvim, probe, bridge_container):
+        """The failure the Mirror Set rule exists for, end to end through real
+        Neovim: add a method to Foo, do not save, switch to Bar. From disk the
+        Brain would answer "cannot resolve"."""
+        nvim.command(f"edit {PRODUCER}")
+        text = bridge_container.read_file(PRODUCER)
+        nvim.current.buffer[:] = text.replace(
+            INSERTION, "fun brandNewUnsavedMethod(): Int = 42").rstrip("\n").split("\n")
+
+        nvim.command(f"hide edit {CONSUMER}")
+        consumer = bridge_container.read_file(CONSUMER)
+        nvim.current.buffer[:] = consumer.replace(
+            CONSUMER_MARKER, "fun probe() = producer.").rstrip("\n").split("\n")
+        row = next(i for i, l in enumerate(nvim.current.buffer[:]) if "producer." in l and "fun probe" in l)
+        nvim.current.window.cursor = (row + 1, len(nvim.current.buffer[row]))
+
+        wait_until(lambda: "brandNewUnsavedMethod" in mirrors(probe)["CrossFileProducer.kt"]["text"])
+        result = complete(nvim, "brandNewUnsavedMethod", "existingMethod")
+        brain_view = mirrors(probe)["CrossFileConsumer.kt"]["text"].split("\n")
+        assert result["found"]["brandNewUnsavedMethod"], (result, brain_view[-6:])
+        assert result["found"]["existingMethod"], result
+
+
+# --------------------------------------------------------------- the write
+class TestWriting:
+
+    @pytest.mark.parametrize("backupcopy", ["auto", "yes", "no"])
+    def test_a_real_write_neither_blocks_nor_diverges(
+            self, nvim, probe, bridge_container, backupcopy):
+        """ADR-0003's open question, answered with Neovim's own `:w`.
+
+        `backupcopy=no` writes a new file and renames it over the old one, which
+        is Neovim's default behaviour for most files; `yes` rewrites in place.
+        Either way IntelliJ sees the file change under an unsaved Mirror."""
+        original = bridge_container.read_file(PRODUCER)
+        acks = probe.debug_state()["saveAcks"]
+        try:
+            nvim.command(f"set backupcopy={backupcopy}")
+            nvim.command(f"edit {PRODUCER}")
+            wait_until(lambda: "CrossFileProducer.kt" in mirrors(probe))
+            nvim.current.buffer.append("// saved by nvim", 0)
+            wait_until(lambda: mirrors(probe)["CrossFileProducer.kt"]["text"] == buffer_text(nvim))
+            expected = buffer_text(nvim)
+
+            nvim.command("write")
+
+            assert bridge_container.read_file(PRODUCER) == expected, "the Editor's write is the write"
+            # The handshake ran: the Brain acknowledged before the bytes hit disk.
+            wait_until(lambda: probe.debug_state()["saveAcks"] > acks,
+                       message="Neovim never ran the save handshake")
+            # And the IDE is still alive, well after the file watcher has reacted.
+            import time
+            time.sleep(3)
+            probe.timeout = 10
+            m = mirrors(probe)["CrossFileProducer.kt"]
+            assert m["text"] == expected and m["convergent"] is True
+        finally:
+            nvim.command("set backupcopy&")
+            nvim.command("silent! %bwipeout!")
+            bridge_container.write_file(PRODUCER, original.rstrip("\n"))
+
+    def test_write_still_works_when_the_brain_is_gone(self, nvim, bridge_container):
+        """SPEC.md §3 / §5.4: `:w` must never fail or block because of the Bridge."""
+        target = "/work/fixture/src/main/kotlin/dev/bridge/fixture/probe/InspectionWarning.kt"
+        original = bridge_container.read_file(target)
+        try:
+            nvim.command(f"edit {target}")
+            wait_until(lambda: attached(nvim) == 1)
+            # Cut the Session without telling nvim's buffer.
+            nvim.exec_lua("for _, c in ipairs(vim.lsp.get_clients({name='ij-bridge'})) do c:stop(true) end")
+            nvim.current.buffer.append("// written without a Brain", 0)
+            nvim.command("write")
+            assert "// written without a Brain" in bridge_container.read_file(target)
+        finally:
+            nvim.command("silent! %bwipeout!")
+            bridge_container.write_file(target, original.rstrip("\n"))
+
+
+# --------------------------------------------------------------- completion
+def large_surface(nvim, bridge_container) -> None:
+    nvim.command(f"edit {CONSUMER}")
+    wait_until(lambda: attached(nvim) == 1)
+    text = bridge_container.read_file(CONSUMER).replace(
+        CONSUMER_MARKER, "val probe = LargeSurface().compute")
+    lines = text.rstrip("\n").split("\n")
+    nvim.current.buffer[:] = lines
+    row = next(i for i, l in enumerate(lines) if "LargeSurface().compute" in l)
+    nvim.current.window.cursor = (row + 1, len(lines[row]))
+
+
+class TestCompletion:
+    """Editor -> Brain -> IntelliJ -> blink.cmp, in the state the Bridge lives in:
+    Neovim has the focus and IntelliJ is in the background."""
+
+    def test_the_source_streams_intellijs_items_to_blink(self, nvim, bridge_container):
+        large_surface(nvim, bridge_container)
+        complete(nvim)                    # cold start: IntelliJ's first completion is slow
+        result = complete(nvim, "computeMetricNumber000", "computeMetricNumber399")
+        assert result["closed"], result
+        assert result["count"] >= 300
+        assert result["first"] == "computeMetricNumber000"     # IntelliJ's own order
+        assert result["found"]["computeMetricNumber000"]
+        assert result["calls"] >= 1
+
+    def test_blink_shows_the_menu_for_typed_text(self, nvim, bridge_container, bridge_display):
+        """The visual half of observability: does blink's popup render here?
+        (HARNESS.md §14.) The screenshot is kept either way."""
+        from pathlib import Path
+        nvim.command(f"edit {CONSUMER}")
+        wait_until(lambda: attached(nvim) == 1)
+        nvim.command("normal! G")
+        nvim.feedkeys(nvim.replace_termcodes("Oval probe = LargeSurface().compu"), "n", False)
+        shown = wait_until(
+            lambda: nvim.exec_lua("return require('blink.cmp').is_menu_visible()"),
+            timeout=20, message="blink.cmp never showed its menu")
+
+        def labels_now():
+            return nvim.exec_lua("""
+                local items = require('blink.cmp.completion.list').items or {}
+                local out = {}
+                for i = 1, math.min(#items, 8) do out[i] = items[i].label end
+                return out""")
+        # blink shows the menu as soon as any source has answered; ours streams in.
+        try:
+            wait_until(lambda: any(str(l).startswith("computeMetricNumber") for l in labels_now()),
+                       timeout=20, message="IntelliJ's items never reached blink")
+        except AssertionError:
+            pass                                   # the screenshot below is the evidence
+        labels = labels_now()
+        artifacts = Path(__file__).parent / "artifacts"
+        artifacts.mkdir(exist_ok=True)
+        bridge_display.screenshot(artifacts / "blink_menu.png")
+        assert shown
+        assert any(str(l).startswith("computeMetricNumber") for l in labels), (
+            labels, nvim.exec_lua("return require('ij_bridge.blink').last"))
+
+
+class TestCompletionInTheBackground:
+    """The condition the Bridge actually runs in."""
+
+    def test_completion_works_with_the_ide_in_the_background(
+            self, nvim, probe, bridge_container, bridge_display):
+        """The default CodeCompletionHandlerBase returns nothing while IntelliJ is
+        not the active application; hooking its completionFinished event, as
+        Comrade does, does not (docs/adr/0008, amendment)."""
+        bridge_display.focus("nvim-harness")
+        # Guard against passing vacuously: the bug only exists in this state.
+        assert probe.debug_state()["appActive"] is False, "IntelliJ was the active application"
+        large_surface(nvim, bridge_container)
+        result = complete(nvim, "computeMetricNumber000")
+        assert result["count"] >= 300, result
+        assert probe.debug_state()["appActive"] is False
+
+
+# ------------------------------------------------------------------ overhead
+class TestEditorOverhead:
+    """SPEC.md §7 with Neovim in the loop and IntelliJ in the background: the
+    request leaves nvim, the Brain answers, and blink.cmp has been handed the items."""
+
+    def test_overhead_with_the_editor_inside_the_budget(self, nvim, bridge_container):
+        large_surface(nvim, bridge_container)
+        samples = nvim.exec_lua("""
+            local source = require('ij_bridge.blink').new()
+            local blink = require('ij_bridge.blink')
+            local out = {}
+            for i = 1, 35 do
+              local row = vim.api.nvim_win_get_cursor(0)[1]
+              local line = vim.api.nvim_get_current_line()
+              local ctx = { bufnr = vim.api.nvim_get_current_buf(), cursor = { row, #line },
+                            line = line }
+              local closed = false
+              blink.last = nil
+              source:get_completions(ctx, function(r)
+                if not r.is_incomplete_forward then closed = true end
+              end)
+              vim.wait(30000, function() return closed and blink.last ~= nil end, 1)
+              if i > 5 then table.insert(out, blink.last) end   -- five warm-up runs
+              vim.wait(150)
+            end
+            return out""")
+        assert len(samples) == 30
+
+        overhead = [(s["to_delivered_ns"] - s["ij_first_items_ns"]) / 1e6 for s in samples]
+        ij = [s["ij_first_items_ns"] / 1e6 for s in samples]
+        p95 = lambda v: sorted(v)[int(len(v) * 0.95) - 1]
+        report = {
+            "items": samples[-1]["items"],
+            "ij_time_ms": {"median": statistics.median(ij), "p95": p95(ij)},
+            "overhead_ms": {"median": statistics.median(overhead), "p95": p95(overhead)},
+            "budget_ms": OVERHEAD_BUDGET_MS,
+        }
+        print("\n  editor-in-loop " + json.dumps(report))
+        assert all(o > 0 for o in overhead)
+        assert p95(overhead) < OVERHEAD_BUDGET_MS, report
