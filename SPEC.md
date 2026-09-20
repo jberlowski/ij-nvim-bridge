@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics and surfacing Indexing are not yet built; see *Next* in §12.
+Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics are built. Surfacing Indexing and incremental completion are next; see *Next* in §12.
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -249,6 +249,9 @@ Inspections alone are insufficient: *cannot resolve symbol*, syntax errors and t
 - **Granularity:** full-file replacement per publish.
 - **Severity:** IntelliJ `HighlightSeverity` → LSP `DiagnosticSeverity`, carrying IntelliJ's inspection id in `code`.
 - **Indexing:** withheld entirely. Stale diagnostics are worse than none.
+- **Which editors:** the daemon only analyses editors that are showing, so the Editor sends `$/ij/focus` when its active buffer changes and the Brain selects that Mirror's tab (IDE-internal; no OS focus is taken). Publishes go to every connected Session, since Mirrors belong to the project.
+- **Cleared** with an empty publish when a Mirror closes.
+- **Built** in slice 3, and asserted both on the wire and through Neovim's own `vim.diagnostic`, including errors typed into an unsaved buffer.
 
 ## 10. Debug surface
 

@@ -29,15 +29,20 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
     private val transport = Transport(Channels.newOutputStream(conn))
 
     fun run() {
-        conn.use {
-            val input = Channels.newInputStream(conn)
-            while (true) {
-                val message = Wire.read(input) ?: return
-                // t1 of SPEC.md §7 is when the request has arrived, not when we
-                // began waiting for it.
-                val received = System.nanoTime()
-                if (!handle(message, received)) return
+        brain.register(transport)
+        try {
+            conn.use {
+                val input = Channels.newInputStream(conn)
+                while (true) {
+                    val message = Wire.read(input) ?: return
+                    // t1 of SPEC.md §7 is when the request has arrived, not when we
+                    // began waiting for it.
+                    val received = System.nanoTime()
+                    if (!handle(message, received)) return
+                }
             }
+        } finally {
+            brain.unregister(transport)
         }
     }
 
@@ -77,7 +82,13 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     val doc = params.obj("textDocument")
                     brain.mirrors.saved(doc.str("uri"), doc.intOr("version", -1))
                 }
-                "textDocument/didClose" -> brain.mirrors.close(params.obj("textDocument").str("uri"))
+                "textDocument/didClose" -> {
+                    val uri = params.obj("textDocument").str("uri")
+                    brain.mirrors.close(uri)
+                    brain.diagnostics.clear(uri)
+                }
+                // The Editor's active buffer changed (FEATURES.md §9).
+                "\$/ij/focus" -> brain.mirrors.select(params.obj("textDocument").str("uri"))
 
                 "\$/ij/completion" -> {
                     val uri = params.obj("textDocument").str("uri")

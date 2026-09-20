@@ -49,6 +49,19 @@ class BrainService(private val project: Project) : Disposable {
 
     val mirrors = MirrorSet(project).also { Disposer.register(this, it) }
     val completion = CompletionEngine(project).also { Disposer.register(this, it) }
+    val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
+
+    private val transports = java.util.concurrent.CopyOnWriteArraySet<Transport>()
+
+    fun register(transport: Transport) { transports += transport }
+    fun unregister(transport: Transport) { transports -= transport }
+
+    /** A notification for every connected Session. Mirrors are per project, not per Session. */
+    fun broadcast(message: JsonObject) {
+        for (t in transports) {
+            try { t.send(message) } catch (_: Exception) { transports -= t }
+        }
+    }
 
     @Synchronized
     fun start() {
@@ -120,7 +133,7 @@ class BrainService(private val project: Project) : Disposable {
             put("save", buildJsonObject { put("includeText", false) })
         })
         put("completion", buildJsonObject { put("streaming", true) })
-        put("diagnostics", false)
+        put("diagnostics", true)
         put("formatting", false)
         put("ij", buildJsonObject { put("ide", ide()) })
     }

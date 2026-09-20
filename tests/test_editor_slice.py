@@ -150,6 +150,55 @@ class TestMirroring:
         assert result["found"]["existingMethod"], result
 
 
+# -------------------------------------------------------------- diagnostics
+RESOLUTION = f"{SRC}/probe/ResolutionError.kt"
+
+
+def diagnostics(nvim) -> list[dict]:
+    return nvim.exec_lua("return vim.diagnostic.get(0)")
+
+
+class TestDiagnostics:
+    """Through Neovim's own diagnostic machinery: `vim.diagnostic`, the float,
+    `]d`. Nothing here is Bridge-specific on the Neovim side."""
+
+    def test_cannot_resolve_reaches_vim_diagnostic(self, nvim):
+        nvim.command(f"edit {RESOLUTION}")
+        found = wait_until(
+            lambda: [d for d in diagnostics(nvim) if "Unresolved reference" in d["message"]],
+            timeout=40, message="no 'Unresolved reference' in vim.diagnostic")
+        assert len(found) >= 2
+        assert all(d["source"] == "IntelliJ" for d in found)
+        assert all(d["severity"] == 1 for d in found)                 # vim.diagnostic.severity.ERROR
+
+    def test_an_unsaved_error_is_flagged_and_then_cleared(self, nvim, bridge_container):
+        nvim.command(f"edit {CONSUMER}")
+        wait_until(lambda: attached(nvim) == 1)
+        lines = bridge_container.read_file(CONSUMER).rstrip("\n").split("\n")
+        broken = lines[:-1] + ["    fun broken() = stillNotDefined()"] + lines[-1:]
+        nvim.current.buffer[:] = broken
+        wait_until(lambda: any("stillNotDefined" in d["message"] for d in diagnostics(nvim)),
+                   timeout=40, message="the error typed into the buffer was never flagged")
+        nvim.current.buffer[:] = lines
+        wait_until(lambda: not any("stillNotDefined" in d["message"] for d in diagnostics(nvim)),
+                   timeout=40, message="the fixed error was never cleared")
+
+    def test_switching_back_selects_the_mirror(self, nvim, probe):
+        """$/ij/focus: a buffer that stayed Mirrored while hidden must become the
+        IDE's selected tab again when the developer returns to it, or the daemon
+        stops analysing it."""
+        nvim.command(f"edit {CONSUMER}")
+        nvim.current.buffer.append("// unsaved", 0)                  # keeps it Mirrored
+        nvim.command(f"hide edit {PRODUCER}")
+        # Opening another buffer selects *its* tab: the unsaved one is Mirrored but hidden.
+        wait_until(lambda: "CrossFileProducer.kt" in mirrors(probe) and
+                   not mirrors(probe)["CrossFileConsumer.kt"]["showing"],
+                   message="the unsaved buffer's Mirror never went into the background")
+        nvim.command(f"buffer {CONSUMER}")
+        wait_until(lambda: mirrors(probe)["CrossFileConsumer.kt"]["showing"],
+                   message="returning to the buffer did not select its Mirror")
+
+
 # --------------------------------------------------------------- the write
 class TestWriting:
 

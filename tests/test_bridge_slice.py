@@ -57,7 +57,7 @@ class TestSession:
         with Wire(bridge.port) as w:
             caps = w.initialize()["capabilities"]
         assert caps["completion"] == {"streaming": True}
-        assert caps["diagnostics"] is False
+        assert caps["diagnostics"] is True
         assert caps["formatting"] is False
         assert caps["ij"]["ide"].startswith("IU-262")
 
@@ -296,6 +296,62 @@ class TestCompletion:
     def test_completion_of_an_unmirrored_buffer_is_an_error(self, wire):
         with pytest.raises(RpcError):
             wire.complete(CONSUMER, 0, 0)
+
+
+# -------------------------------------------------------------- diagnostics
+RESOLUTION = f"{SRC}/probe/ResolutionError.kt"
+
+
+def published(wire, path, until, timeout=40):
+    """Read publishDiagnostics for `path` until `until(diagnostics)` holds."""
+    target = uri(path)
+    got = wire.notifications(
+        "textDocument/publishDiagnostics",
+        until=lambda p: p["uri"] == target and until(p["diagnostics"]), timeout=timeout)
+    last = got[-1]
+    assert last["uri"] == target and until(last["diagnostics"]), (
+        f"no matching publishDiagnostics; saw {[(g['uri'].rsplit('/', 1)[1], len(g['diagnostics'])) for g in got]}")
+    return last
+
+
+def unresolved(diagnostics):
+    return [d for d in diagnostics if "Unresolved reference" in d["message"]]
+
+
+class TestDiagnostics:
+    """SPEC.md §9: harvested from the daemon, not from inspections alone."""
+
+    def test_cannot_resolve_is_published(self, bridge_container, wire):
+        text = bridge_container.read_file(RESOLUTION)
+        wire.did_open(RESOLUTION, text)
+        pub = published(wire, RESOLUTION, lambda d: len(unresolved(d)) >= 2)
+
+        call = next(d for d in unresolved(pub["diagnostics"]) if "thisFunctionDoesNotExist" in d["message"])
+        line = next(i for i, l in enumerate(text.split("\n")) if "thisFunctionDoesNotExistAnywhere()" in l)
+        assert call["severity"] == 1
+        assert call["source"] == "IntelliJ"
+        assert call["range"]["start"]["line"] == line
+        assert pub["version"] == 0
+
+    def test_they_follow_an_unsaved_edit(self, bridge_container, wire):
+        """A clean file, then an error typed into the buffer and not saved: the
+        Brain must flag it, and stop flagging it once fixed."""
+        text = bridge_container.read_file(CONSUMER)
+        wire.did_open(CONSUMER, text)
+        published(wire, CONSUMER, lambda d: not unresolved(d))
+
+        end_line = len(text.rstrip("\n").split("\n")) - 1     # before the closing brace
+        wire.did_change(CONSUMER, 1, replace_range(end_line, 0, 0, "    fun broken() = stillNotDefined()\n"))
+        published(wire, CONSUMER, lambda d: any("stillNotDefined" in x["message"] for x in unresolved(d)))
+
+        wire.did_change(CONSUMER, 2, {"text": text})            # back to the clean text
+        published(wire, CONSUMER, lambda d: not unresolved(d))
+
+    def test_closing_a_mirror_clears_its_diagnostics(self, bridge_container, wire):
+        wire.did_open(RESOLUTION, bridge_container.read_file(RESOLUTION))
+        published(wire, RESOLUTION, lambda d: len(unresolved(d)) >= 2)
+        wire.did_close(RESOLUTION)
+        published(wire, RESOLUTION, lambda d: d == [])
 
 
 # ------------------------------------------------------------------ overhead

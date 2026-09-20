@@ -71,6 +71,17 @@ class MirrorSet(private val project: Project) : Disposable {
 
     fun get(uri: String): Mirror? = mirrors[uri]
     fun all(): List<Mirror> = mirrors.values.sortedBy { it.uri }
+    fun byFile(file: VirtualFile): Mirror? = mirrors.values.firstOrNull { it.file == file }
+
+    /**
+     * The Editor's active buffer changed. Make its Mirror the selected tab: the
+     * daemon only analyses editors that are showing, and completion needs one.
+     * IDE-internal; it does not take OS focus from the developer's terminal.
+     */
+    fun select(uri: String) {
+        val m = mirrors[uri] ?: return
+        edt { FileEditorManager.getInstance(project).openFile(m.file, false) }
+    }
 
     fun open(uri: String, version: Int, text: String) {
         val file = resolve(uri) ?: throw IllegalArgumentException("no file for $uri")

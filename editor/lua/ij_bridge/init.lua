@@ -54,6 +54,16 @@ function M.attach(buf)
   }, { bufnr = buf })
 end
 
+--- Tell the Brain which buffer is active (FEATURES.md §9). Its Mirror becomes the
+--- selected tab in the IDE, which is what makes the daemon analyse it. A buffer
+--- attached just now needs no message: its didOpen selects it.
+local function focus(buf)
+  local client = M.client(buf)
+  if client then
+    client:notify('$/ij/focus', { textDocument = { uri = vim.uri_from_bufnr(buf) } })
+  end
+end
+
 --- Release the Mirror for `buf`: didClose is sent by detaching.
 function M.detach(buf)
   for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf, name = M.name })) do
@@ -77,7 +87,11 @@ function M.setup(_)
   vim.api.nvim_create_autocmd('BufEnter', {
     group = group,
     callback = function(args)
+      local was_attached = M.client(args.buf) ~= nil
       M.attach(args.buf)
+      if was_attached then
+        focus(args.buf)
+      end
     end,
   })
   vim.api.nvim_create_autocmd('BufLeave', {
