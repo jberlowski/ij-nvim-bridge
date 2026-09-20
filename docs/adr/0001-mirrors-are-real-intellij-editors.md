@@ -12,6 +12,6 @@ The IDE's tab bar changes as the developer navigates in Neovim. This is visible 
 
 Mirrors are bound to real `Document`s and therefore to disk, which resurrects the write-ownership question that a non-physical mirror would have avoided. That is settled separately in [ADR-0003](./0003-editor-owns-disk-writes.md).
 
-IntelliJ's *Editor Tabs limit* (default 10) closes least-recently-used tabs. The Bridge must own Mirror eviction explicitly, or IntelliJ will close Mirrors out from under it.
+IntelliJ's *Editor Tabs limit* (default 30 on 2026.2.3) closes least-recently-used tabs. The Bridge must own Mirror eviction explicitly, or IntelliJ will close Mirrors out from under it.
 
 Comrade almost certainly reached this same constraint, and this is a better explanation of its architecture than the disk-ownership reasoning usually offered for it.

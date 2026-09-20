@@ -132,7 +132,7 @@ The bound is semantic, not a count. Unsaved buffers stay Mirrored because the Br
 
 LazyVim sets `autowrite = true` but not `autowriteall`, and `autowrite` does not fire on `:b`, window switches, or Telescope jumps. So `{modified}` is routinely non-empty in exactly the navigation pattern that triggers the failure.
 
-The Bridge owns eviction explicitly. IntelliJ's own *Editor Tabs limit* (default 10) closes least-recently-used tabs; a Mirror must never be evicted by IntelliJ without the Bridge knowing.
+The Bridge owns eviction explicitly. IntelliJ's own *Editor Tabs limit* (default **30** on 2026.2.3, measured in Spike Q6) closes least-recently-used tabs; a Mirror must never be evicted by IntelliJ without the Bridge knowing. Every eviction arrives as a `fileClosed` event, and pinned tabs are exempt — the Bridge pins Mirrors and subscribes to `FileEditorManagerListener`.
 
 ### 5.3 Attach / detach
 
@@ -213,7 +213,7 @@ IJ_TIME  = t2 − t1                    reported every run, never gated
 OVERHEAD = (t3 − t0) − (t2 − t1)      gated
 ```
 
-**Gate:** `p95 OVERHEAD < 15ms` **and** no regression against a recorded baseline.
+**Gate:** `p95 OVERHEAD < 15ms` **and** no regression against a recorded baseline. *(15 ms remains provisional: the Spike measured `IJ_TIME` — 178–349 ms warm median — but cannot measure Bridge overhead before a Bridge exists. 15 ms is 4–8% of that; revisit at the first Bridge measurement.)*
 
 A slow IntelliJ — cold index, large project, loaded machine — must never fail the build. That number belongs to IntelliJ, not to the Bridge.
 
@@ -253,16 +253,34 @@ Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor 
 
 ## 11. The Spike — gate before implementation
 
+*Prototype code: branch `spike/q2-q6-probes` (`canary/.../Spike.kt`). Throwaway; not on `main`.*
+
 **No implementation begins until this passes.** It exists because the whole design rests on assumptions about IntelliJ internals that the platform docs do not confirm.
 
-| # | Question | Pass |
-|---|---|---|
-| 1 | Can the Brain open a file as a preview-tab editor without stealing focus from the developer? | Editor exists; IDE focus unchanged |
-| 2 | Can completion be driven on it and `LookupElement`s harvested? | Real items returned for a fixture file |
-| 3 | If not — does the lookup-model fallback (§6.3) work? | Items read from active lookup; popup dismissed |
-| 4 | Does `DaemonCodeAnalyzer` produce harvestable `HighlightInfo` for it? | *cannot resolve symbol* observed on a broken fixture |
-| 5 | What is IntelliJ's own completion time on the fixture? | Baseline recorded for the overhead gate |
-| 6 | Do Mirrors survive IntelliJ's Editor Tabs limit under the Mirror Set policy? | No Mirror evicted without the Bridge knowing |
+| # | Question | Pass | Result |
+|---|---|---|---|
+| 1 | Can the Brain open a file as a preview-tab editor without stealing focus from the developer? | Editor exists; IDE focus unchanged | ✅ Passed. 5.3 ms warm |
+| 2 | Can completion be driven on it and `LookupElement`s harvested? | Real items returned for a fixture file | ✅ **Passed**, on an editor that is *not* the focus owner. `CodeCompletionHandlerBase(BASIC).invokeCompletion` returned 402 items for `LargeSurface().compute` (400 of them `computeMetricNumberNNN`) and 842 for `LargeSurface().`. Harvested from `LookupImpl.items`. See note below |
+| 3 | If not — does the lookup-model fallback (§6.3) work? | Items read from active lookup; popup dismissed | ✅ Not needed as a fallback: the handler path *is* the lookup-model path (a `LookupImpl` is created, `isShown == true`). Reading items and `hideActiveLookup` both worked, 20/20 iterations, no lingering popup |
+| 4 | Does `DaemonCodeAnalyzer` produce harvestable `HighlightInfo` for it? | *cannot resolve symbol* observed on a broken fixture | ✅ **Passed.** `ERROR` "Unresolved reference 'thisFunctionDoesNotExistAnywhere'." and `'NoSuchTypeInAnyClasspath'` from the markup model, plus daemon-only "never used" warnings. Warm: ~370 ms after `restart(psiFile)`; ~5.3 s when forced from cold |
+| 5 | What is IntelliJ's own completion time on the fixture? | Baseline recorded for the overhead gate | 📏 See *Baseline* below |
+| 6 | Do Mirrors survive IntelliJ's Editor Tabs limit under the Mirror Set policy? | No Mirror evicted without the Bridge knowing | ✅ **Passed.** 8 files opened at limit 3: all 5 evictions arrived as `fileClosed`. Pinned tabs survived; raising the limit evicts nothing. Default limit is 30, not 10 |
+
+**Note on Q2 vs Q3.** These two turned out to be one mechanism. `invokeCompletion` does not hand back items; it creates a `LookupImpl`, and the items are read from it. A path that yields `LookupElement`s *without* any lookup (`CompletionService.performCompletion` with hand-built `CompletionParameters`) was not attempted and is not needed. Consequence for the design: §6.3's "fallback" is the primary path, and the IDE window will show a popup flicker on every completion.
+
+**Two behaviours the Brain must be designed around.**
+
+- `invokeCompletion` **blocks the EDT** for ~90% of the time-to-first-items (`invokeCall` 160 ms of 178 ms warm). Completions serialise on IntelliJ's UI thread, and a cancelled request cannot interrupt the synchronous part.
+- Result sets are **not deterministic across runs** (841–843 items for the same position), and basic completion caps a prefix match at ~400 items.
+
+**Baseline (Q5)**, fixture `spring-kotlin-mvc`, in-IDE nanos, 1 ms poll, aarch64 container, `invokeCompletion` on the EDT. First-items is the moment the lookup holds items; it is an upper bound by at most one poll.
+
+| Scenario | Items | Cold (1st) | Warm median | Warm p95 |
+|---|---|---|---|---|
+| `LargeSurface().compute` | 402 | 283 ms | **178 ms** | 240 ms |
+| `LargeSurface().` | 842 | 422 ms (done 1302 ms) | **349 ms** | 406 ms |
+
+The very first completion after IDE start took **2.4 s** to first items and 5.5 s to finish. Streaming is real: the cold run delivered first items ~3 s before IntelliJ finished calculating.
 
 **Failure of 2 *and* 3 is a genuine no-go** and triggers re-evaluation against `intellij-server.nvim` rather than building on fragile internals.
 

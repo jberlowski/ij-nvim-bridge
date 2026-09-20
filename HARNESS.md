@@ -206,6 +206,22 @@ The switch that works is the **Registry** key `ide.experimental.ui.onboarding`, 
 
 A corollary worth keeping: **any modal or EDT-holding dialog will look like a Brain that hangs.** The canary answers every request inside a try/catch that returns a JSON-RPC error, so a throwing handler reports rather than stalling — but a blocked EDT still presents as a timeout, and the first diagnostic should be a screenshot.
 
+### "Not Indexing" is not "ready" — and a killed IDE forgets its project
+
+Both found during the Spike; both produced plausible wrong answers.
+
+**Readiness.** `indexing == False` twice running is reached while the Gradle sync is still in flight. Diagnostics run in that window return *"Not resolved until the project is fully loaded"* (INFORMATION) instead of *Unresolved reference* (ERROR). The gate that worked: wait for `Project model for project spring-kotlin-mvc … External system: commit model` in `idea.log`, then a further ~30 s. `Brain.await_ready` should adopt it.
+
+**Relaunching.** `Ide.quit()` followed by `pkill` and a relaunch brings IntelliJ up with **no module model and no source roots** — the project tree shows `fixture` rather than `fixture [spring-kotlin-mvc]`, the editor gutter says `OFF`, the daemon returns zero highlights, and completion resolves nothing. It does not re-sync. Every symptom looks like an IntelliJ or Kotlin limitation. Screenshot first: the project tree gave it away. Use a fresh container per plugin change; do not restart in place.
+
+### `idea.log` is appended, not truncated
+
+Across relaunches in one container, `grep` for a marker line matches the *previous* run. Count before launching and wait for the count to rise.
+
+### The canary's JSON reader dropped escape sequences
+
+`Rpc.stringField` turned `\n` into a literal `n`, so a probe inserted `nval x = …` and completion ran in a spelling/comment context, returning *"Save 'nval' to dictionary"*. Plausible-looking items from the wrong position. Fixed on the `spike/q2-q6-probes` branch; the Bridge uses `kotlinx.serialization` and does not carry this risk.
+
 ## 14. Open
 
 - **Terminal emulator fidelity.** `xterm` is scriptable and works, but it has not been checked whether blink.cmp's completion popup renders there as it would for a real user. If it does not, the visual half of observability is misleading for precisely the feature that matters most.
