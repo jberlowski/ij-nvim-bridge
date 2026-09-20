@@ -20,10 +20,11 @@ On macOS a container and a VM both run inside a Linux VM regardless, so the choi
 ij-nvim-harness
 ├── Xvfb :99  +  x11vnc  +  noVNC          → watch at localhost:6080
 ├── IntelliJ IDEA 2026.2.3 (262.10968.63, free tier) on :99
-├── Neovim + LazyVim (pinned) + Bridge plugin
-│     └── --listen /run/harness/nvim.sock  ← drivable by RPC
-├── JDK + Gradle
-└── fixtures/spring-kotlin-mvc
+├── i3                                     → geometry + tiling (§13)
+├── Neovim 0.12.5 + LazyVim + blink.cmp    in an xterm on :99
+│     └── --listen 0.0.0.0:7777            ← drivable by RPC
+├── JDK 21 + Gradle 9.7.1
+└── /work/fixture (spring-kotlin-mvc)
 ```
 
 Neither Lima nor OrbStack provides a display; both require Xvfb inside or XQuartz on the host. Xvfb inside keeps the harness self-contained and — critically — screenshotable.
@@ -54,16 +55,17 @@ Three consumers, three needs.
 Both sides are driven over sockets, from outside, by Python.
 
 ```python
-# Editor
-nvim = pynvim.attach('socket', path='/run/harness/nvim.sock')
-nvim.command('edit /fixtures/spring-kotlin-mvc/src/.../GreetingController.kt')
-nvim.feedkeys('...')
-nvim.funcs.nvim_win_get_cursor(0)
+# Editor — TCP purely as a harness convenience; not Bridge transport
+nvim = pynvim.attach('tcp', address='127.0.0.1', port=7777)
+nvim.command('edit /work/fixture/src/.../GreetingController.kt')
+nvim.funcs.cursor(13, 5)
 
-# Brain
-brain = JsonRpcClient('$XDG_RUNTIME_DIR/ij-nvim-bridge/<hash>.sock')
-brain.request('$/ij/debug/state')
+# Brain — the real unix socket, reached two ways (see harness/brain.py)
+brain.request('$/canary/state')                  # host, via socat
+brain.request_local(sock, '$/canary/ping', 30)   # in-container, for timing
 ```
+
+Timing must use the in-container path. Measured on this machine: **0.177 ms** median in-container versus **0.957 ms** through socat plus Docker's port forwarding — a 5.4x difference that would be charged to `OVERHEAD` and is not the Bridge.
 
 Neovim runs **inside a terminal emulator on `:99`**, not headless. It is therefore visible in noVNC and in screenshots, while `--listen` still exposes it for RPC. Headless nvim would run the plugins but render nothing, which forfeits the observability the container exists to provide.
 
@@ -113,7 +115,11 @@ The fixture must contain, deliberately:
 
 ```
 tests/
-  conftest.py            container lifecycle, fixture reset, both clients
+  conftest.py                  container lifecycle, both clients, evidence
+  harness/                     container, display, editor, brain, ide
+  test_harness_sufficiency.py  ← exists: proves the harness itself (32 tests)
+
+  # for the Bridge, once the Spike passes:
   test_discovery.py      registry, longest-prefix match, Dormant, stale entries
   test_mirrors.py        Mirror Set, attach/detach, eviction, tab limit
   test_sync.py           didChange fidelity, save handshake, Convergence
@@ -157,9 +163,52 @@ The harness is **integration only**. It is slow, it involves two real processes 
 
 A behaviour testable headlessly in the Gradle build belongs there, not here.
 
-## 12. Open
+## 12. Running it
 
-- **Does IntelliJ behave correctly in a container** — inotify limits for VFS file watchers, memory ceilings, Xvfb quirks. To be answered by the Spike (SPEC §11), which is the harness's first real workload.
-- **Image size.** IntelliJ plus a JDK plus a warmed Gradle cache plus a baked index is large. Acceptable if layer caching keeps rebuilds cheap; revisit if it does not.
-- **Whether baked indices survive a container reset cleanly**, or whether IntelliJ invalidates them on a new instance id.
-- **Terminal emulator choice** for hosting nvim on `:99` — needs to be scriptable, fast, and faithful enough that blink.cmp's popup renders as it would for a real user.
+```
+make image      build the image (IntelliJ, Neovim, LazyVim, fixture)
+make canary     build the canary plugin against the pinned IDE
+make test       the full sufficiency suite
+make test-fast  only the tests that do not start IntelliJ
+make harness    leave a container up with IntelliJ on the fixture
+make watch      open the live noVNC view
+```
+
+### The canary
+
+`canary/` is **not the Bridge**. It is a probe that proves the harness can do what the Spike will need — load a plugin into a running IDE, serve an unprivileged unix socket, publish the Registry, report IDE state, and be timed — without implementing any Bridge behaviour. It is built inside the container against the pinned IDE, so it compiles against the same build the tests run.
+
+It answers three methods: `$/canary/ping`, `$/canary/state`, `$/canary/openEditor`.
+
+### The JetBrains User Agreement
+
+IntelliJ will not start until the agreement is accepted, and **there is no supported non-interactive path**. The only `*NON_INTERACTIVE` flag in the product is `REMOTE_DEV_NON_INTERACTIVE`, which covers shell prompts on the headless remote-dev backend; JetBrains support state plainly that no command-line option exists.
+
+The repository owner accepted it interactively, through noVNC, on 2026-09-20. The image records that acceptance (`eua_accepted_version=2.0`) with provenance in the Dockerfile. It is a record of their acceptance, not a substitute for it — writing the preference directly is the same legal act as ticking the box, so it was not done unilaterally.
+
+`device_id` and `user_id_on_machine` are deliberately **not** baked: they are per-machine identifiers and regenerate per container. Usage statistics are declined.
+
+## 13. Two things that are not optional
+
+Both were discovered the hard way, both looked like IntelliJ API limitations, and both were diagnosed from a screenshot.
+
+### A window manager
+
+Without one, X11 clients get no geometry management at all. IntelliJ's frame rendered as a **~40 pixel sliver**, nothing could be raised or resized, and `FileEditorManager.openTextEditor()` called from a plugin **hung indefinitely**. It looked exactly like a platform restriction on opening editors from a background thread.
+
+i3 runs in the image and also tiles, so the IDE and the terminal sit side by side in the live view instead of one covering the other.
+
+### Suppressing first-run onboarding
+
+The *"Meet the Islands Theme"* tour popup holds the EDT, which produces the same symptom: `openTextEditor()` never returns, with no exception and nothing in the log.
+
+The switch that works is the **Registry** key `ide.experimental.ui.onboarding`, read by `NewUiOnboardingUtil.isOnboardingEnabled`. Note that this is *not* the same as `experimental.ui.onboarding.proposed.version`, which is a PropertiesComponent value that dismissing the dialog happens to write — setting that one does nothing on a first run. The distinction cost an hour.
+
+A corollary worth keeping: **any modal or EDT-holding dialog will look like a Brain that hangs.** The canary answers every request inside a try/catch that returns a JSON-RPC error, so a throwing handler reports rather than stalling — but a blocked EDT still presents as a timeout, and the first diagnostic should be a screenshot.
+
+## 14. Open
+
+- **Terminal emulator fidelity.** `xterm` is scriptable and works, but it has not been checked whether blink.cmp's completion popup renders there as it would for a real user. If it does not, the visual half of observability is misleading for precisely the feature that matters most.
+- **Whether baked Gradle caches survive a reset cleanly**, or whether IntelliJ re-resolves against a new instance id.
+- **Mason's `tree-sitter-cli` install fails during the image build.** Harmless so far — treesitter parsers are irrelevant to the Bridge — but the LazyVim install is not pristine.
+- **The project name changes after Gradle sync**, from the directory name (`fixture`) to `rootProject.name` (`spring-kotlin-mvc`). Anything keying off the window title must accept both.

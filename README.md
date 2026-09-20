@@ -2,7 +2,14 @@
 
 Neovim borrowing the code intelligence of the IntelliJ that is already open on your desk — with the settings you have already configured in it.
 
-**Status: pre-implementation.** Specification only. Nothing is built, and nothing may be built until the Spike passes ([SPEC.md §11](./SPEC.md)).
+**Status: harness built, Bridge not started.** The development harness exists and is proven sufficient for the work ahead. No Bridge code may be written until the Spike passes ([SPEC.md §11](./SPEC.md)).
+
+```
+make image     build the harness image
+make canary    build the probe plugin
+make test      prove the harness is sufficient
+make harness   leave a container up; watch at localhost:6080
+```
 
 ## Why not an existing option
 

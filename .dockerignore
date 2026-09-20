@@ -1,0 +1,11 @@
+.git
+.github
+docs
+tests
+canary/build
+canary/.gradle
+fixture/build
+fixture/.gradle
+fixture/.idea
+**/.DS_Store
+*.md

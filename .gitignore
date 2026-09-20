@@ -1,0 +1,10 @@
+.venv/
+tests/artifacts/
+build/
+.gradle/
+fixture/gradle/wrapper/gradle-wrapper.jar
+fixture/gradlew
+fixture/gradlew.bat
+__pycache__/
+*.pyc
+canary/.intellijPlatform/

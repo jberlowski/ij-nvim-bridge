@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Bring up the display stack, then hand over to CMD.
+#
+# Xvfb + i3 + x11vnc + noVNC live inside the image rather than relying on a host
+# X server: it keeps the harness self-contained and, more importantly, makes it
+# screenshotable (HARNESS.md §4).
+set -euo pipefail
+
+: "${DISPLAY:=:99}"
+: "${SCREEN_GEOMETRY:=1920x1200x24}"
+
+log() { printf '[harness-init] %s\n' "$*" >&2; }
+
+mkdir -p /home/dev/.harness/log
+
+Xvfb "${DISPLAY}" -screen 0 "${SCREEN_GEOMETRY}" -nolisten tcp -noreset \
+  >/home/dev/.harness/log/xvfb.log 2>&1 &
+
+# Wait for the display rather than sleeping a guessed interval.
+for _ in $(seq 1 100); do
+  if xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1 || { log "Xvfb failed to start"; exit 1; }
+log "Xvfb up on ${DISPLAY} (${SCREEN_GEOMETRY})"
+
+# A window manager is NOT optional. Without one, X11 clients get no geometry
+# management: IntelliJ renders as a ~40px sliver, nothing can be raised, and
+# opening an editor deadlocks the EDT waiting on a frame that never lays out.
+# i3 also tiles, so the IDE and the terminal share the screen in the live view.
+DISPLAY="${DISPLAY}" i3 -c /etc/i3/harness.config \
+  >/home/dev/.harness/log/i3.log 2>&1 &
+
+for _ in $(seq 1 100); do
+  if DISPLAY="${DISPLAY}" i3-msg -t get_version >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+DISPLAY="${DISPLAY}" i3-msg -t get_version >/dev/null 2>&1 \
+  && log "i3 up" || log "WARNING: i3 did not report ready"
+
+x11vnc -display "${DISPLAY}" -nopw -forever -shared -quiet -rfbport 5900 \
+  >/home/dev/.harness/log/x11vnc.log 2>&1 &
+
+websockify --web=/usr/share/novnc 6080 localhost:5900 \
+  >/home/dev/.harness/log/novnc.log 2>&1 &
+
+log "noVNC on :6080  (vnc.html)"
+log "ready"
+
+exec "$@"

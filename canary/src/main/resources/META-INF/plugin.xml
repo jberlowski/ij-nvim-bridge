@@ -1,0 +1,17 @@
+<idea-plugin>
+    <id>dev.bridge.canary</id>
+    <name>IJ-Nvim Bridge Canary</name>
+    <vendor>ij-nvim-bridge</vendor>
+
+    <description><![CDATA[
+      Not the Bridge. A probe that proves the harness can do what the Spike
+      (SPEC.md §11) will require: load a plugin, serve an unprivileged unix
+      socket, publish the Registry, and report IDE state to a test.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="dev.bridge.canary.CanaryStartup"/>
+    </extensions>
+</idea-plugin>
