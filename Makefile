@@ -5,7 +5,7 @@ IMAGE   ?= ij-nvim-harness:base
 VENV    ?= .venv
 PY      := $(VENV)/bin/python
 
-.PHONY: help image canary venv test test-fast harness shell watch clean
+.PHONY: help image canary brain venv test test-fast harness shell watch clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -17,12 +17,15 @@ image: ## Build the harness image (IntelliJ, Neovim, LazyVim, fixture)
 canary: ## Build the canary plugin against the pinned IDE
 	./scripts/build-canary.sh
 
+brain: ## Build the Brain plugin against the pinned IDE
+	./scripts/build-brain.sh
+
 venv: $(VENV)/bin/pytest ## Create the test virtualenv
 $(VENV)/bin/pytest:
 	python3 -m venv $(VENV)
 	$(VENV)/bin/pip install -q -r tests/requirements.txt
 
-test: venv ## Run the full sufficiency suite (starts IntelliJ; slow)
+test: venv ## Run every suite (starts IntelliJ twice; needs `make canary brain` first)
 	cd tests && ../$(PY) -m pytest
 
 test-fast: venv ## Only the tests that do not start IntelliJ

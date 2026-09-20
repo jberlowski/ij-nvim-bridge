@@ -22,6 +22,7 @@ from harness.ide import Ide
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = REPO_ROOT / "tests" / "artifacts"
 CANARY_ZIP = REPO_ROOT / "canary" / "build" / "distributions" / "canary-0.1.0.zip"
+BRAIN_ZIP = REPO_ROOT / "brain" / "build" / "distributions" / "brain-0.1.0.zip"
 FIXTURE_PROJECT = "/work/fixture"
 
 
@@ -95,6 +96,67 @@ def brain_socket(container, brain):
     return socks[0]
 
 
+# ---------------------------------------------------------------- the Bridge
+# The Brain plugin and the canary both publish a Registry and a socket for the
+# same Project Root, so they cannot share an IDE. The Bridge gets its own
+# container, on its own ports so both can be up in one pytest session.
+@pytest.fixture(scope="session")
+def bridge_container():
+    c = Container.start(novnc_port=6082, nvim_port=7779, brain_port=7880)
+    try:
+        yield c
+    finally:
+        if os.environ.get("HARNESS_KEEP") != "1":
+            c.stop()
+
+
+@pytest.fixture(scope="session")
+def bridge(bridge_container):
+    """The Brain plugin, running in an IDE that has finished importing."""
+    if not BRAIN_ZIP.exists():
+        pytest.skip(f"brain plugin not built: {BRAIN_ZIP} (run make brain)")
+    c = bridge_container
+    ide = Ide(c)
+    ide.trust()
+    ide.install_plugin(BRAIN_ZIP)
+    ide.launch(FIXTURE_PROJECT)
+    ide.await_window("fixture", "spring-kotlin-mvc", timeout=300)
+    b = Brain(c)
+    b.await_registry(timeout=300)
+    socks = b.sockets()
+    assert socks, "brain published no socket"
+    b.await_ready(socks[0], timeout=900, state_method="$/ij/debug/state")
+    b.bridge(socks[0])
+    b.socket = socks[0]
+    b.ide = ide
+    return b
+
+
+@pytest.fixture
+def wire(bridge):
+    """A fresh Session, initialised, with every Mirror it opened closed after."""
+    from harness.wire import Wire
+    w = Wire(bridge.port)
+    w.initialize()
+    # A modal dialog holds the EDT and every Brain request then times out one by
+    # one - a 21-test suite spent ten minutes doing exactly that. Say so once,
+    # early, and let the failure hook attach a screenshot (HARNESS.md §13).
+    w.timeout = 15
+    try:
+        w.debug_state()
+    except Exception as exc:  # noqa: BLE001
+        w.close()
+        pytest.fail(f"the Brain is unresponsive - is a dialog holding the EDT? ({exc!r})")
+    w.timeout = 30
+    try:
+        yield w
+    finally:
+        for m in w.debug_state()["mirrors"]:
+            w.notify("textDocument/didClose", {"textDocument": {"uri": m["uri"]}})
+        w.request("$/ij/debug/setTabLimit", {"limit": 30})
+        w.close()
+
+
 # ----------------------------------------------------------------- the editor
 @pytest.fixture(scope="session")
 def editor(container):
@@ -110,15 +172,18 @@ def pytest_runtest_makereport(item, call):
     """Failures ship with a picture (HARNESS.md §4)."""
     outcome = yield
     report = outcome.get_result()
-    if report.when != "call" or not report.failed:
+    # Setup and teardown too: a blocked EDT surfaces in the `wire` fixture, which
+    # is neither the test body nor something a screenshot of "call" would catch.
+    if not report.failed:
         return
-    c = item.funcargs.get("container")
+    stem = item.name if report.when == "call" else f"{item.name}.{report.when}"
+    c = item.funcargs.get("container") or item.funcargs.get("bridge_container")
     if c is None:
         return
     try:
-        Display(c).screenshot(ARTIFACTS / f"{item.name}.png")
+        Display(c).screenshot(ARTIFACTS / f"{stem}.png")
         logs = c.exec("tail -80 /home/dev/.harness/log/*.log 2>/dev/null",
                       check=False).stdout
-        (ARTIFACTS / f"{item.name}.log").write_text(logs)
+        (ARTIFACTS / f"{stem}.log").write_text(logs)
     except Exception as exc:  # noqa: BLE001 - evidence is best-effort
         print(f"could not capture evidence: {exc}")

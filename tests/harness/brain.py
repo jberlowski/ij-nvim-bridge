@@ -22,6 +22,10 @@ from .container import Container
 from .ide import Ide
 
 REGISTRY_DIR = "/run/user/1000/ij-nvim-bridge"
+# The port socat listens on *inside* the container. Container.start publishes
+# it on a host port of the caller's choosing (Brain.port), so the two differ
+# whenever a second container runs beside the first; using the host number
+# inside the container silently bridged nothing.
 BRIDGE_TCP_PORT = 7878
 
 
@@ -107,31 +111,36 @@ class Brain:
     def bridge(self, sock_path: str, timeout: float = 30.0) -> None:
         """Expose a container unix socket on a published TCP port.
 
-        Waits for the port to actually accept rather than sleeping a guessed
-        interval — socat needs an unpredictable moment to bind, and a fixed
-        sleep produced intermittent ConnectionRefusedError.
+        Waits for socat to actually be listening rather than sleeping a guessed
+        interval - it needs an unpredictable moment to bind, and a fixed sleep
+        produced intermittent ConnectionRefusedError.
         """
         if self._bridged == sock_path:
             return
         self.c.exec("pkill -f 'socat TCP-LISTEN' || true", check=False)
         self.c.exec_detached(
-            f"socat TCP-LISTEN:{self.port},fork,reuseaddr,bind=0.0.0.0 "
+            f"socat TCP-LISTEN:{BRIDGE_TCP_PORT},fork,reuseaddr,bind=0.0.0.0 "
             f"UNIX-CONNECT:{sock_path}",
             log="/home/dev/.harness/log/socat.log",
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            try:
-                with socket.create_connection(("127.0.0.1", self.port), timeout=2):
-                    self._bridged = sock_path
-                    return
-            except OSError:
-                time.sleep(0.25)
-        raise TimeoutError(f"socat bridge to {sock_path} never accepted on :{self.port}")
+            # Ask from *inside* the container. A host-side connect proves nothing:
+            # Docker's port forwarder accepts TCP before socat has bound, so the
+            # first real connection after a "successful" probe was reset.
+            listening = self.c.exec(
+                f"bash -c 'exec 3<>/dev/tcp/127.0.0.1/{BRIDGE_TCP_PORT}'", check=False
+            ).returncode == 0
+            if listening:
+                self._bridged = sock_path
+                return
+            time.sleep(0.25)
+        raise TimeoutError(f"socat bridge to {sock_path} never listened on :{BRIDGE_TCP_PORT}")
 
     # ---------------------------------------------------------------- readiness
     def await_ready(self, sock_path: str, timeout: float = 900.0,
-                    synced_after: int = 0) -> None:
+                    synced_after: int = 0,
+                    state_method: str = "$/canary/state") -> None:
         """Block until the Brain can actually answer.
 
         A window titled after the project appears long before the project is
@@ -154,10 +163,13 @@ class Brain:
                 if ide.sync_commits() <= synced_after:
                     last, consecutive = "Gradle import not committed", 0
                 else:
-                    state = self.request_local(sock_path, "$/canary/state")[0]["result"]
-                    last = state.get("indexing", "?")
-                    # A JSON boolean, not a string: Rpc.obj emits raw values.
-                    consecutive = consecutive + 1 if last is False else 0
+                    state = self.request_local(sock_path, state_method)[0]["result"]
+                    # The canary reports a JSON boolean `indexing`; the Bridge's
+                    # debug surface reports SPEC.md §8's state by name.
+                    idle = (state["indexing"] is False if "indexing" in state
+                            else state.get("state") == "Ready")
+                    last = state.get("indexing", state.get("state", "?"))
+                    consecutive = consecutive + 1 if idle else 0
                     if consecutive >= 2:
                         return
             except Exception as exc:  # noqa: BLE001 - the IDE may be mid-import
