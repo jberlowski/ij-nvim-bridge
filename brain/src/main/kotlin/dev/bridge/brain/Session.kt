@@ -88,6 +88,8 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     brain.mirrors.close(uri)
                     brain.diagnostics.clear(uri)
                 }
+                in NavigationEngine.METHODS -> brain.navigation.submit(method, id, params, transport)
+                "\$/cancelRequest" -> brain.navigation.cancel(params["id"])
                 // The Editor's active buffer changed (FEATURES.md §9).
                 "\$/ij/focus" -> brain.mirrors.select(params.obj("textDocument").str("uri"))
 
@@ -128,6 +130,14 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 }
                 "\$/ij/debug/completionDelay" -> {
                     DebugLevers.completionDelayMs = params.int("ms").toLong()
+                    reply(id, JsonNull)
+                }
+                "\$/ij/debug/navigationDelay" -> {
+                    DebugLevers.navigationDelayMs = params.int("ms").toLong()
+                    reply(id, JsonNull)
+                }
+                "\$/ij/debug/refresh" -> {
+                    brain.refreshFiles()
                     reply(id, JsonNull)
                 }
                 "\$/ij/debug/indexing" -> {

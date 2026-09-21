@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** Harness only: slow completion down so an in-flight request can be observed. */
 object DebugLevers {
     @Volatile var completionDelayMs = 0L
+    @Volatile var navigationDelayMs = 0L
 }
 
 class CompletionEngine(private val project: Project) : Disposable {

@@ -94,4 +94,6 @@ object RpcError {
     const val INTERNAL = -32603
     /** LSP RequestCancelled: what a superseded completion is answered with. */
     const val REQUEST_CANCELLED = -32800
+    /** LSP ContentModified: the answer would be stale, or IntelliJ cannot answer yet. */
+    const val CONTENT_MODIFIED = -32801
 }

@@ -8,6 +8,7 @@ asking for `fresh_container`.
 from __future__ import annotations
 
 import os
+import time
 import shutil
 from pathlib import Path
 
@@ -96,6 +97,41 @@ def brain_socket(container, brain):
     return socks[0]
 
 
+# Probe files added to fixture/ after the image was built. The image bakes the
+# fixture in, so copy any that are missing and ask the IDE to pick them up. A
+# rebuilt image makes this a no-op.
+NEW_PROBES = [
+    "src/main/kotlin/dev/bridge/fixture/probe/Shapes.kt",
+    "src/main/kotlin/dev/bridge/fixture/probe/ShapeCaller.kt",
+    "src/main/kotlin/dev/bridge/fixture/probe/JavaShapes.java",
+]
+
+
+def sync_fixture(container, brain) -> None:
+    from harness.util import wait_until
+    from harness.wire import Wire
+    added = False
+    for rel in NEW_PROBES:
+        guest = f"{FIXTURE_PROJECT}/{rel}"
+        if container.exec(f"test -f {guest}", check=False).returncode != 0:
+            container.write_file(guest, (REPO_ROOT / "fixture" / rel).read_text().rstrip("\n"))
+            added = True
+    if not added:
+        return
+    with Wire(brain.port) as w:
+        w.initialize()
+        w.request("$/ij/debug/refresh", {})
+        time.sleep(3)                       # let indexing of the new files begin
+        # Ready twice running, as await_ready: the state can read Ready between
+        # the refresh and the indexing it triggers.
+        seen = {"n": 0}
+
+        def ready():
+            seen["n"] = seen["n"] + 1 if w.debug_state()["state"] == "Ready" else 0
+            return seen["n"] >= 3
+        wait_until(ready, timeout=240, interval=1.0, message="the IDE never settled after adding probe files")
+
+
 # ---------------------------------------------------------------- the Bridge
 # The Brain plugin and the canary both publish a Registry and a socket for the
 # same Project Root, so they cannot share an IDE. The Bridge gets its own
@@ -129,6 +165,7 @@ def bridge(bridge_container):
     b.bridge(socks[0])
     b.socket = socks[0]
     b.ide = ide
+    sync_fixture(c, b)
     return b
 
 

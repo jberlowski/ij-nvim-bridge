@@ -53,6 +53,7 @@ class BrainService(private val project: Project) : Disposable {
     val mirrors = MirrorSet(project).also { Disposer.register(this, it) }
     val completion = CompletionEngine(project).also { Disposer.register(this, it) }
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
+    val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
 
     private val transports = java.util.concurrent.CopyOnWriteArraySet<Transport>()
 
@@ -164,6 +165,14 @@ class BrainService(private val project: Project) : Disposable {
         Thread(r, "bridge-status").apply { isDaemon = true }
     }
 
+    /** Harness only: pick up files created on disk behind the IDE's back. */
+    fun refreshFiles() {
+        val root = project.basePath ?: return
+        com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByPath(root)?.let {
+            com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, it)
+        }
+    }
+
     /** Harness only: put IntelliJ in dumb mode for [ms] so Indexing can be observed. */
     fun simulateIndexing(ms: Long) {
         com.intellij.openapi.project.DumbService.getInstance(project).queueTask(
@@ -187,6 +196,13 @@ class BrainService(private val project: Project) : Disposable {
             put("willSaveWaitUntil", true)
             put("save", buildJsonObject { put("includeText", false) })
         })
+        // Standard LSP navigation: Neovim's own gd, gy, gI, grr, K and highlights.
+        put("definitionProvider", true)
+        put("typeDefinitionProvider", true)
+        put("implementationProvider", true)
+        put("referencesProvider", true)
+        put("hoverProvider", true)
+        put("documentHighlightProvider", true)
         put("completion", buildJsonObject { put("streaming", true) })
         put("diagnostics", true)
         put("formatting", false)

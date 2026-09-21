@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge - Feature specification
 
-Status: **planning, decisions D1-D4 taken.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
+Status: **decisions D1-D4 taken; the navigation core (build order 2) is built.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
 
 ## 1. The principle: it looks like ordinary LSP
 
@@ -101,6 +101,12 @@ LSP has no vocabulary for these; they are `workspace/executeCommand` commands an
 | **Debugger** | out of scope | DAP is a different protocol and a different project. |
 | **Database, HTTP client, UML** | out of scope | Not language intelligence. |
 
+## 6b. Someday / wish list
+
+Not planned, not designed, no priority. Written down so the idea is not lost.
+
+- **Debugging through DAP.** Drive IntelliJ's debugger from Neovim via the Debug Adapter Protocol (`nvim-dap`): breakpoints, stepping, variables, stack, evaluate. A different protocol and a different adapter, so it is a project of its own rather than a feature of this one; noted as out of scope in §6 and kept here as a wish.
+
 ## 7. Editing-lifecycle features
 
 Already in SPEC.md, listed so the feature set reads as one:
@@ -146,7 +152,12 @@ All four were taken by the maintainer; each records what was chosen and why it h
 ## 11. Build order
 
 1. **v1 spine (in progress):** Registry, Sessions, Mirrors, save handshake, streaming completion. **Next in line:** diagnostics, Indexing surfaced, incremental completion and cache.
-2. **Navigation core:** definition, type definition, implementation, references, hover, document highlight. One shared read-action helper, cancellation, position conversion, the ContentModified/Indexing rule. D1 decided here.
+2. **Navigation core: built.** Definition, type definition, implementation, references, hover and document highlight, each asserted on the wire and through Neovim's own `vim.lsp.buf.*` calls, in Kotlin and Java, with Neovim focused and IntelliJ in the background. How, for whoever extends it:
+   - They run in cancellable **background read actions**, not on the EDT, in `NavigationEngine`. A reply is `ContentModified` (-32801) if the Mirror changed while answering or the Brain is Indexing, `RequestCancelled` (-32800) at once on `$/cancelRequest`, and exactly one reply is ever sent.
+   - Locations come from the target file's *document*, so a target in a buffer with unsaved changes is reported on the line the Editor sees. Library code follows D1: written read-only to `~/.cache/ij-nvim-bridge/library/<key>/`, keyed by the jar entry's URL, decompiled text for classes.
+   - Definition uses `GotoDeclarationAction.findAllTargetElements`, type definition `GotoTypeDeclarationAction.findSymbolTypes`, implementation `DefinitionsScopedSearch`, references and highlights `ReferencesSearch` (project or file scope, read/write from `ReadWriteAccessDetector`).
+   - **Hover needs two APIs.** Kotlin (K2) documents symbols only through the newer documentation-target API, whose `computeDocumentation()` throws for Java targets outside a coroutine context; Java answers to the older `DocumentationProvider`. The signature and the documentation fall back independently. IntelliJ's HTML is converted to Markdown by a small converter that is deliberately not a general one.
+   - Not built: declaration (`gD`, same as definition from a usage), and results are capped at 5000 locations.
 3. **Symbols:** document symbols, workspace symbols, then folding, selection, signature help.
 4. **Edits:** formatting and organize imports first (the project's motivation, and smallest: one copy, one diff), then completion insertion, then code actions (D3), then rename (D2).
 5. **On-save and generation:** format-on-save, generate code, extract/inline/move.
