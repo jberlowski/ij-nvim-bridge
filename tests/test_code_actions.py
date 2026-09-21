@@ -168,7 +168,7 @@ class TestOrganizeImports:
         from harness.wire import Wire
         with Wire(bridge.port) as w:
             caps = w.initialize()["capabilities"]
-        assert caps["codeActionProvider"]["codeActionKinds"] == [ORGANIZE]
+        assert caps["codeActionProvider"]["codeActionKinds"] == [ORGANIZE, "quickfix", "refactor.rewrite"]
         assert caps["codeActionProvider"]["resolveProvider"] is True
 
 
@@ -225,3 +225,151 @@ class TestThroughNeovimsBuiltins:
         wait_until(lambda: [m for m in probe.debug_state(text=True)["mirrors"]
                             if m["uri"].endswith("InspectionWarning.kt")][0]["text"] == ORGANIZED_KOTLIN,
                    timeout=15, message="the Mirror never caught up with the organized buffer")
+
+
+# ============================================================ quick fixes and intentions
+KOTLIN_FIXABLE = '''package dev.bridge.fixture.probe
+
+class Q {
+    fun a(x: Int): String {
+        val unused = 5
+        return "value: " + x
+    }
+    fun b(list: List<Int>): Boolean {
+        if (list.size == 0) return true
+        return false
+    }
+    fun c(s: String?) = s!!.length
+}
+'''
+
+JAVA_FIXABLE = '''package dev.bridge.fixture.probe;
+
+import java.util.List;
+
+public class Q {
+    public boolean eq(String a) { return a == "x"; }
+    public void unused() { int neverUsed = 3; String s = null; }
+}
+'''
+
+
+def at_pos(text: str, needle: str, into: int) -> dict:
+    idx = text.index(needle) + into
+    line = text.count("\n", 0, idx)
+    return {"line": line, "character": idx - (text.rfind("\n", 0, idx) + 1)}
+
+
+def offered(w, path, text, needle, into, title, only=None, timeout=60):
+    """What IntelliJ offers at that place, asked again until it offers `title`: the analysis
+    behind a quick fix arrives a moment after the file is opened, and a developer presses the key again."""
+    pos = at_pos(text, needle, into)
+    deadline = time.monotonic() + timeout
+    while True:
+        ctx = {"diagnostics": []}
+        if only is not None:
+            ctx["only"] = only
+        found = w.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri(path)}, "range": {"start": pos, "end": pos}, "context": ctx}, timeout=90)
+        match = [a for a in found if title in a["title"]]
+        if match or time.monotonic() > deadline:
+            assert match, f"{title!r} never offered; got {[a['title'] for a in found]}"
+            return match[0], found
+        time.sleep(2)
+
+
+def applied(w, path, text, needle, into, title, **kw):
+    action, _ = offered(w, path, text, needle, into, title, **kw)
+    resolved = w.request("codeAction/resolve", action, timeout=90)
+    return apply_edits(text, resolved["edit"]["changes"].get(uri(path), [])), resolved
+
+
+class TestQuickFixesAndIntentions:
+
+    def test_kotlin_a_quick_fix_for_a_warning(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        out, _ = applied(wire, KOTLIN, KOTLIN_FIXABLE, "list.size == 0", 10, "isEmpty()")
+        assert "if (list.isEmpty()) return true" in out, out
+
+    def test_kotlin_concatenation_becomes_a_template(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        out, _ = applied(wire, KOTLIN, KOTLIN_FIXABLE, '"value: " + x', 12, "Convert concatenation to template")
+        assert 'return "value: $x"' in out, out
+
+    def test_kotlin_an_unused_variable_is_removed(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        out, _ = applied(wire, KOTLIN, KOTLIN_FIXABLE, "val unused", 6, "Remove variable 'unused'")
+        assert "val unused" not in out and 'return "value: " + x' in out, out
+
+    def test_kotlin_an_intention_that_is_not_a_fix(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        action, _ = offered(wire, KOTLIN, KOTLIN_FIXABLE, "s!!.length", 2, "Convert to block body")
+        assert action["kind"] == "refactor.rewrite"
+        out, _ = applied(wire, KOTLIN, KOTLIN_FIXABLE, "s!!.length", 2, "Convert to block body")
+        assert "return s!!.length" in out, out
+
+    def test_java_equals_instead_of_double_equals(self, wire):
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        out, _ = applied(wire, JAVA, JAVA_FIXABLE, 'a == "x"', 3, "Replace '==' with 'equals()'")
+        assert ".equals(" in out and 'a == "x"' not in out, out
+
+    def test_java_an_unused_local_is_removed(self, wire):
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        out, _ = applied(wire, JAVA, JAVA_FIXABLE, "int neverUsed", 6, "Remove local variable 'neverUsed'")
+        assert "neverUsed" not in out, out
+
+    def test_the_kinds_are_told_apart_and_filtered(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        offered(wire, KOTLIN, KOTLIN_FIXABLE, "list.size == 0", 10, "isEmpty()")
+        kinds = lambda only: sorted({a["kind"] for a in wire.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri(KOTLIN)}, "context": {"diagnostics": [], "only": only},
+            "range": {"start": at_pos(KOTLIN_FIXABLE, "list.size == 0", 10), "end": at_pos(KOTLIN_FIXABLE, "list.size == 0", 10)}},
+            timeout=60)})
+        assert kinds(["quickfix"]) == ["quickfix"]
+        assert kinds(["refactor"]) == ["refactor.rewrite"], "a parent kind matches what is under it"
+        assert kinds(["source"]) == [ORGANIZE]
+        assert kinds(["refactor.extract"]) == []
+
+    def test_a_request_changes_neither_the_mirror_nor_the_disk(self, wire, bridge_container):
+        on_disk = bridge_container.read_file(KOTLIN)
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        applied(wire, KOTLIN, KOTLIN_FIXABLE, "list.size == 0", 10, "isEmpty()")
+        (m,) = wire.debug_state(text=True)["mirrors"]
+        assert m["text"] == KOTLIN_FIXABLE and m["version"] == 0
+        assert bridge_container.read_file(KOTLIN) == on_disk
+
+    def test_an_action_for_text_that_has_changed_is_content_modified(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        action, _ = offered(wire, KOTLIN, KOTLIN_FIXABLE, "list.size == 0", 10, "isEmpty()")
+        wire.did_change(KOTLIN, 1, replace_range(0, 0, 0, "// edited\n"))
+        with pytest.raises(RpcError) as e:
+            wire.request("codeAction/resolve", action, timeout=60)
+        assert e.value.code == -32801
+
+    def test_an_action_that_needs_a_choice_says_so_instead_of_doing_half(self, wire):
+        """"Specify type explicitly" starts a live template: not a text edit."""
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        action, _ = offered(wire, KOTLIN, KOTLIN_FIXABLE, "val unused", 6, "Specify type explicitly")
+        with pytest.raises(RpcError) as e:
+            wire.request("codeAction/resolve", action, timeout=60)
+        assert e.value.code == -32602 and "needs more than a text edit" in str(e.value)
+
+    def test_listing_computes_no_edit(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        _, found = offered(wire, KOTLIN, KOTLIN_FIXABLE, "list.size == 0", 10, "isEmpty()")
+        assert all("edit" not in a for a in found)
+
+
+class TestQuickFixesThroughNeovim:
+
+    def test_the_action_menu_applies_a_quick_fix(self, nvim):
+        open_in_nvim(nvim, KOTLIN, KOTLIN_FIXABLE)
+        pos = at_pos(KOTLIN_FIXABLE, "list.size == 0", 10)
+        nvim.current.window.cursor = (pos["line"] + 1, pos["character"])
+
+        def done():
+            nvim.exec_lua("""vim.lsp.buf.code_action({
+                filter = function(a) return a.title:find('isEmpty', 1, true) ~= nil end, apply = true })""")
+            time.sleep(3)
+            return "list.isEmpty()" in "\n".join(nvim.current.buffer[:])
+        wait_until(done, timeout=90, interval=2, message="the quick fix was never applied:\n" + "\n".join(nvim.current.buffer[:]))

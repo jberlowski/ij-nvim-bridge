@@ -117,6 +117,7 @@ def test_create_move_use_and_import(nvim, probe, bridge_container, workspace):
     # 4. a third file, and a variable of a type nobody has imported
     new_file(nvim, f"{BASE}/app", "Reporter")
     write_buffer(nvim, f"package {PKG}.app\n\nclass Reporter {{\n    fun run() {{\n        \n    }}\n}}\n")
+    nvim.current.buffer[4] = " " * 8                     # whatever the write did to the blank line's indent
     nvim.current.window.cursor = (5, 8)
     nvim.feedkeys(nvim.replace_termcodes("A" + "val t: Tick"), "n", False)
 
@@ -145,9 +146,19 @@ def test_create_move_use_and_import(nvim, probe, bridge_container, workspace):
           if r.label == 'Ticket' and r.ms then return true end
         end
         return false"""), timeout=30, message="blink never resolved the highlighted Ticket")
-    nvim.exec_lua(f"require('blink.cmp').accept({{ index = {ticket_index()} }})")
-    wait_until(lambda: f"import {PKG}.board.Ticket" in text_of(nvim), timeout=30,
-               message="accepting Ticket did not add its import:\n" + text_of(nvim))
+    accepting = nvim.exec_lua(f"""
+        local ok, err = pcall(function() return require('blink.cmp').accept({{ index = {ticket_index()} }}) end)
+        return vim.inspect({{ ok = ok, err = tostring(err) }})""")
+    try:
+        wait_until(lambda: f"import {PKG}.board.Ticket" in text_of(nvim), timeout=30)
+    except AssertionError:
+        raise AssertionError("accepting Ticket did not add its import:\n" + text_of(nvim) + "\n"
+                             f"cursor: {nvim.current.window.cursor}, mode: {nvim.exec_lua('return vim.api.nvim_get_mode().mode')}\n"
+                             f"accept: {accepting}\n"
+                             f"resolves: {nvim.exec_lua('return vim.inspect(require(chr).resolves)'.replace('chr', repr('ij_bridge.blink')))}\n"
+                             f"menu visible: {nvim.exec_lua('return require(chr).is_menu_visible()'.replace('chr', repr('blink.cmp')))}\n"
+                             f"messages: {nvim.command_output('messages')[-600:]}\n"
+                             f"editor log: {[l[:160] for l in nvim.exec_lua('return vim.fn.readfile(require(chr).path)'.replace('chr', repr('ij_bridge.log')))[-14:]]}") from None
     nvim.command("stopinsert")
     assert "val t: Ticket" in text_of(nvim)
 

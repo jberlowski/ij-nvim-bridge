@@ -118,6 +118,10 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                 if (DebugLevers.navigationDelayMs > 0) Thread.sleep(DebugLevers.navigationDelayMs)
                 // The buffer moved on while this waited its turn: the position asked about is stale.
                 if (mirror != null && mirror.version != versionAtStart) throw CodeActions.StaleAction()
+                if (method == "textDocument/codeAction") {
+                    // What is offered depends on the caret and the selection.
+                    (params["range"] as? JsonObject)?.let { codeActions.placeCaret(mirror!!, it) }
+                }
                 if (method == "textDocument/signatureHelp") {
                     // Some parameter-info handlers read the caret, not the offset they are given.
                     val at = MirrorSet.offset(mirror!!.document, params["position"]!!.jsonObject)

@@ -1,6 +1,11 @@
 package dev.bridge.brain
 
 import com.intellij.application.options.CodeStyle
+import com.intellij.codeInsight.daemon.impl.ShowIntentionsPass
+import com.intellij.modcommand.ActionContext
+import com.intellij.modcommand.ModCommand
+import com.intellij.modcommand.ModCompositeCommand
+import com.intellij.modcommand.ModUpdateFileText
 import com.intellij.lang.LanguageImportStatements
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
@@ -34,7 +39,9 @@ class CodeActions(private val project: Project) {
 
     companion object {
         const val ORGANIZE_IMPORTS = "source.organizeImports"
-        val KINDS = listOf(ORGANIZE_IMPORTS)
+        const val QUICK_FIX = "quickfix"
+        const val REWRITE = "refactor.rewrite"
+        val KINDS = listOf(ORGANIZE_IMPORTS, QUICK_FIX, REWRITE)
     }
 
     // ------------------------------------------------------------------ listing
@@ -58,7 +65,63 @@ class CodeActions(private val project: Project) {
                 })
             }
         }
+        actions += intentionsAt(mirror, params, only)
         return JsonArray(actions)
+    }
+
+    // ---------------------------------------------------- quick fixes and intentions
+    /** One thing IntelliJ offers at a place: its title, and where it came from. */
+    private class Offer(val kind: String, val key: String, val title: String, val action: com.intellij.modcommand.ModCommandAction)
+
+    /**
+     * What IntelliJ would show under Alt+Enter at [start]-[end]: the fixes for the errors and warnings
+     * there, and the intentions. Only those that have a `ModCommand` form are offered: that is an
+     * action's effect as *data*, which is what lets the Brain answer with edits and touch nothing. An
+     * older action mutates the file when invoked, and cannot be run against a copy safely (its
+     * pointers are into the original). Must run in a read action, with the Mirror's caret and
+     * selection already at the range (the engine does that first).
+     */
+    private fun offersAt(mirror: Mirror): List<Offer> {
+        val file = PsiDocumentManager.getInstance(project).getPsiFile(mirror.document) ?: return emptyList()
+        val info = ShowIntentionsPass.getActionsToShow(mirror.editor, file)
+        val context = ActionContext.from(mirror.editor, file)
+        val out = LinkedHashMap<String, Offer>()
+        val groups = listOf(
+            info.errorFixesToShow to QUICK_FIX, info.inspectionFixesToShow to QUICK_FIX,
+            info.intentionsToShow to REWRITE,
+        )
+        for ((descriptors, kind) in groups) {
+            for (descriptor in descriptors) {
+                val intention = descriptor.action
+                val mod = intention.asModCommandAction() ?: continue
+                val presentation = mod.getPresentation(context) ?: continue
+                val title = presentation.name.ifBlank { intention.text }
+                val key = "${intention.familyName}|$title"
+                out.putIfAbsent(key, Offer(kind, key, title, mod))
+            }
+        }
+        return out.values.toList()
+    }
+
+    private fun intentionsAt(mirror: Mirror, params: JsonObject, only: List<String>?): List<JsonObject> {
+        val range = params["range"]?.jsonObject ?: return emptyList()
+        if (only != null && only.isNotEmpty() && only.none { QUICK_FIX.startsWith(it) || REWRITE.startsWith(it) || it == "quickfix" }) {
+            return emptyList()
+        }
+        return offersAt(mirror).filter { wanted(it.kind, only) }.map { offer ->
+            buildJsonObject {
+                put("title", offer.title)
+                put("kind", offer.kind)
+                if (offer.kind == QUICK_FIX) put("isPreferred", false)
+                put("data", buildJsonObject {
+                    put("uri", mirror.uri)
+                    put("version", mirror.version)
+                    put("kind", offer.kind)
+                    put("key", offer.key)
+                    put("range", range)
+                })
+            }
+        }
     }
 
     /** LSP `only` filtering: a requested kind matches itself and anything under it. */
@@ -76,7 +139,9 @@ class CodeActions(private val project: Project) {
         if (version != null && version != mirror.version) {
             throw StaleAction()
         }
-        val edits = when (data["kind"]?.jsonPrimitive?.contentOrNull) {
+        val kind = data["kind"]?.jsonPrimitive?.contentOrNull
+        if (kind == QUICK_FIX || kind == REWRITE) return resolveIntention(mirror, action, data, version)
+        val edits = when (kind) {
             ORGANIZE_IMPORTS -> organizeImports(mirror)
             else -> throw IllegalArgumentException("unknown action kind")
         }
@@ -88,6 +153,61 @@ class CodeActions(private val project: Project) {
                 put("changes", buildJsonObject { put(mirror.uri, JsonArray(edits)) })
             })
         }
+    }
+
+    /** The offered action is run for its `ModCommand`, and that command is read, never executed. */
+    private fun resolveIntention(mirror: Mirror, action: JsonObject, data: JsonObject, version: Int?): JsonElement {
+        val range = data["range"]?.jsonObject ?: throw IllegalArgumentException("no range on the action")
+        val key = data["key"]?.jsonPrimitive?.contentOrNull ?: throw IllegalArgumentException("no key on the action")
+        placeCaret(mirror, range)
+        val changes = ReadAction.compute<Map<String, List<JsonObject>>, RuntimeException> {
+            val offer = offersAt(mirror).firstOrNull { it.key == key } ?: throw StaleAction()
+            val file = PsiDocumentManager.getInstance(project).getPsiFile(mirror.document) ?: throw StaleAction()
+            val command = offer.action.perform(ActionContext.from(mirror.editor, file))
+            editsOf(command, mirror)
+        }
+        if (mirror.version != version && version != null) throw StaleAction()
+        return buildJsonObject {
+            put("title", action["title"] ?: JsonPrimitive("Quick fix"))
+            put("kind", action["kind"] ?: JsonPrimitive(QUICK_FIX))
+            put("edit", buildJsonObject {
+                put("changes", buildJsonObject { changes.forEach { (uri, edits) -> put(uri, JsonArray(edits)) } })
+            })
+        }
+    }
+
+    /** The Mirror's caret and selection where the request was made: what the actions are computed for. */
+    fun placeCaret(mirror: Mirror, range: JsonObject) {
+        val start = MirrorSet.offset(mirror.document, range["start"]!!.jsonObject)
+        val end = MirrorSet.offset(mirror.document, range["end"]!!.jsonObject)
+        edt {
+            mirror.editor.caretModel.moveToOffset(start)
+            if (end > start) mirror.editor.selectionModel.setSelection(start, end) else mirror.editor.selectionModel.removeSelection()
+        }
+    }
+
+    /** What a command changes, as edits by file. What needs a person, or touches more than text, is refused, naming what. */
+    private fun editsOf(command: ModCommand, mirror: Mirror): Map<String, List<JsonObject>> {
+        val out = LinkedHashMap<String, MutableList<JsonObject>>()
+        for (step in command.unpack()) {
+            when (step) {
+                is ModUpdateFileText -> {
+                    val path = java.nio.file.Path.of(step.file().path)
+                    val uri = path.toUri().toString()
+                    val current = if (uri == mirror.uri) mirror.document.text
+                    else com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(step.file())?.text
+                    if (current != null && current != step.oldText()) throw StaleAction()
+                    out.getOrPut(uri) { ArrayList() } += TextEdits.diff(step.oldText(), step.newText())
+                }
+                // Where the caret goes, what to highlight, a message: nothing to change.
+                is com.intellij.modcommand.ModNavigate, is com.intellij.modcommand.ModHighlight,
+                is com.intellij.modcommand.ModNothing, is com.intellij.modcommand.ModDisplayMessage,
+                is com.intellij.modcommand.ModCopyToClipboard, is com.intellij.modcommand.ModRegisterTabOut -> Unit
+                is ModCompositeCommand -> Unit
+                else -> throw Rename.Refused("this action needs more than a text edit (${step.javaClass.simpleName}), which the Bridge cannot do yet")
+            }
+        }
+        return out
     }
 
     class StaleAction : RuntimeException("the buffer changed since the action was offered")
