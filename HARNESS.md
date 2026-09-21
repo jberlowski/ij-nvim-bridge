@@ -254,6 +254,22 @@ A design that reads a *shown* completion lookup returns nothing whenever Intelli
 
 `nvim --listen` used the host port number inside the container. Fixed the same way: the container-side port is the constant `NVIM_PORT`.
 
+### Only one container at a time
+
+Each container runs an IntelliJ and its Gradle and Kotlin daemons: 3 to 5 GiB, against about 10 in Docker's VM. With the sufficiency container, the Bridge's container and the lifecycle container all up, the last modules of a full run were starved, and failed while passing alone. `conftest.py` now groups modules by the container they use (lifecycle, then sufficiency, then the rest) and stops a session container as soon as the last test needing it has run (`LIVE`, and a `trylast` teardown hook: run earlier, it stopped the container under the last test's own fixture teardown). A full run takes under six minutes, down from eight.
+
+### A reset connection is a lost connection
+
+Found by a lifecycle test that failed one run in two. An IDE killed with data unread *resets* the socket instead of closing it; Neovim then reports `READ_ERROR: "ECONNRESET"` and leaves the LSP client standing, and never calls `on_exit`. The Editor believed in a Brain that was gone: no `IJ: disconnected`, no reconnect. That was an Editor bug, not a harness one: it would have hit a developer whose IDE crashed. `on_error` now treats a `READ_ERROR` as the connection being lost. Neovim prints that error itself, so `v:errmsg` is not empty after a crash; the test clears it before asserting that writing still works.
+
+### One Neovim serves the whole session
+
+Buffers left by one test, and a Mirror they keep alive, change what the next test's `did_open` does (a second opener joins the Mirror and does not replace its text). The `nvim` fixture wipes buffers before and after every test; anything that opens a buffer on its own must go through it. A file that has been formatted many times in a session may also have cached code style that ignores a `.editorconfig` created later, so tests that need a fresh style use a file nothing else touches.
+
+### Wait for blink.cmp to be loadable
+
+`nvim --listen` accepts connections before lazy.nvim has loaded its plugins: `require('blink.cmp')` failed at fixture setup on some runs. `start_nvim` waits for it to load and for the fuzzy library's version file, which is written last.
+
 ## 14. Open
 
 - **blink.cmp's binary is not baked into the image.** It downloads at first use in every container, so the harness needs network and the `nvim_session` fixture waits for it. Baking it into the image (`nvim --headless` with blink loaded, at build time) would remove the network dependency and about a minute per run.

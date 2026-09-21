@@ -86,6 +86,15 @@ def nv(life, life_nvim_session):
     life_nvim_session.command("silent! %bwipeout!")
 
 
+def plugin_state(nv) -> str:
+    return nv.exec_lua("""
+        local m = require('ij_bridge')
+        return vim.inspect({ statusline = m.statusline(), offline = m.offline, attached = m.attached,
+          clients = #vim.lsp.get_clients({ name = 'ij-bridge' }),
+          stopped = vim.tbl_map(function(c) return c:is_stopped() end, vim.lsp.get_clients({ name = 'ij-bridge' })),
+          events = m.events })""")
+
+
 def open_and_edit(nv, life, marker):
     nv.command(f"edit {PRODUCER}")
     try:
@@ -121,17 +130,40 @@ class TestDisconnect:
                    timeout=60, message="the unsaved buffer was not sent again")
         assert nv.eval("v:errmsg") == ""
 
+    def test_a_reset_connection_is_a_lost_connection(self, life, nv):
+        """An IDE killed with data unread resets the socket instead of closing it. Neovim
+        reports a READ_ERROR and leaves the client standing, without ever calling on_exit;
+        the Bridge must treat that as the Brain being gone (this hung a test in one run in two)."""
+        open_and_edit(nv, life, "// unsaved before the reset")
+        nv.exec_lua("""
+            local client = vim.lsp.get_clients({ name = 'ij-bridge' })[1]
+            client.config.on_error(vim.lsp.rpc.client_errors.READ_ERROR, 'ECONNRESET')""")
+        wait_until(lambda: "read error" in str(nv.exec_lua("return require('ij_bridge').events")),
+                   timeout=10, message="the read error was ignored")
+        # The Brain is still up in this test, so it comes back by itself, with its buffers.
+        wait_until(lambda: attached(nv) == 1 and statusline(nv) == "IJ", timeout=60,
+                   message="Neovim never reconnected after the reset\n" + plugin_state(nv))
+        wait_until(lambda: "unsaved before the reset" in mirrors(life).get("CrossFileProducer.kt", {}).get("text", ""),
+                   timeout=60, message="the unsaved buffer was not sent again")
+        events = str(nv.exec_lua("return require('ij_bridge').events"))
+        assert "lost" in events and "reconnect" in events, events
+
     def test_the_ide_going_away_is_shown_and_writing_still_works(self, life, nv):
         open_and_edit(nv, life, "// written while the IDE is gone")
         original = life.c.read_file(PRODUCER)
         try:
             stop_ide(life)
-            wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=60,
-                       message="the loss of the Brain was never shown")
+            try:
+                wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=60)
+            except AssertionError as exc:
+                raise AssertionError(f"the loss of the Brain was never shown\n{plugin_state(nv)}\nide running: "
+                                     f"{life.ide.is_running()}") from None
             out = nv.exec_lua("return vim.api.nvim_exec2('IjBridge', {output = true}).output")
             assert "disconnected" in out, out
 
-            # Editing and saving go on as if the Bridge were not installed.
+            # Editing and saving go on as if the Bridge were not installed. (Neovim itself
+            # reports a reset connection as an error message: that is the loss, not the write.)
+            nv.command("let v:errmsg = ''")
             nv.current.buffer.append("// still typing", 0)
             nv.command("write")
             on_disk = life.c.read_file(PRODUCER)

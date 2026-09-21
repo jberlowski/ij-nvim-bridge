@@ -124,6 +124,23 @@ local function connect(buf, entry)
         end
       end,
     },
+    -- A peer that dies with data unread is reset, not closed: Neovim reports a READ_ERROR
+    -- and leaves the client standing, so on_exit never comes and the Bridge would go on
+    -- believing in a Brain that is gone. A broken transport is a lost connection.
+    on_error = function(code, err)
+      if code ~= vim.lsp.rpc.client_errors.READ_ERROR then
+        return
+      end
+      note('read error ' .. tostring(err))
+      vim.schedule(function()
+        for _, client in ipairs(vim.lsp.get_clients({ name = M.name })) do
+          if client.config.root_dir == entry.root and not client:is_stopped() then
+            client:stop(true)
+          end
+        end
+        M.lost(entry.root)
+      end)
+    end,
     on_exit = function(code, signal, client_id)
       note(('exit client %d code=%s signal=%s'):format(client_id, tostring(code), tostring(signal)))
       M.states[client_id] = nil

@@ -33,10 +33,40 @@ def pytest_configure(config):
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
 
+# ------------------------------------------------------------------ memory
+# Each container runs an IntelliJ, its Gradle and Kotlin daemons: 3 to 5 GiB. Docker's VM
+# has about 10, so two at once is tight and three is not survivable: the last modules of a
+# full run failed for want of memory, passing when run alone. So only one container is ever
+# up: modules run grouped by the container they use (below), and a session container is
+# stopped as soon as the last test that needs it has run.
+LIVE: dict[str, Container] = {}
+SESSION_CONTAINERS = ("container", "bridge_container")
+
+
+def pytest_collection_modifyitems(items):
+    """The lifecycle module (its own container), then the sufficiency tests (the canary
+    IDE), then everything that shares the Bridge's IDE. Stable: order within a module holds."""
+    def group(item):
+        name = item.module.__name__.rsplit(".", 1)[-1]
+        return {"test_lifecycle": 0, "test_harness_sufficiency": 1}.get(name, 2)
+    items.sort(key=group)
+
+
+@pytest.hookimpl(trylast=True)      # after the test's own fixtures have been torn down
+def pytest_runtest_teardown(item, nextitem):
+    if os.environ.get("HARNESS_KEEP") == "1":
+        return
+    remaining = item.session.items[item.session.items.index(item) + 1:]
+    for name in SESSION_CONTAINERS:
+        if name in LIVE and not any(name in later.fixturenames for later in remaining):
+            LIVE.pop(name).stop()
+
+
 # ------------------------------------------------------------------ container
 @pytest.fixture(scope="session")
 def container():
     c = Container.start()
+    LIVE["container"] = c
     try:
         yield c
     finally:
@@ -139,6 +169,7 @@ def sync_fixture(container, brain) -> None:
 @pytest.fixture(scope="session")
 def bridge_container():
     c = Container.start(novnc_port=6082, nvim_port=7779, brain_port=7880)
+    LIVE["bridge_container"] = c
     try:
         yield c
     finally:
