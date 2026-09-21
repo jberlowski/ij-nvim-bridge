@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state, incremental completion and the navigation core (definition, type definition, implementation, references, hover, highlights) and symbols (document and workspace symbols, folding, selection ranges, signature help) are built, as are formatting and organize imports. Next is completion insertion, code actions and rename; see [FEATURES.md](./FEATURES.md).
+Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state, incremental completion and the navigation core (definition, type definition, implementation, references, hover, highlights) and symbols (document and workspace symbols, folding, selection ranges, signature help) are built, as are formatting, organize imports and completion insertion. Next is code actions and rename; see [FEATURES.md](./FEATURES.md).
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -346,7 +346,7 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 **Next.**
 
-Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. What comes next is the rest of the edits (completion insertion, more code actions, rename), in [FEATURES.md](./FEATURES.md) §11.
+Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. What comes next is the rest of the edits (more code actions, rename, new file and move), in [FEATURES.md](./FEATURES.md) §11.
 
 **Deferred.** Bidirectional caret following · run configurations · refactorings beyond rename · licensed-tier harness profile and deep Spring assertions.
 

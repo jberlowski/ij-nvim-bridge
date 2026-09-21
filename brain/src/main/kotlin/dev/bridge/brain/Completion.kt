@@ -67,6 +67,12 @@ class CompletionEngine(private val project: Project) : Disposable {
         val renderNanos: Long,
     )
 
+    /** Where a request was made: what a later `completionItem/resolve` needs to redo the insertion. */
+    class Site(val uri: String, val text: String, val offset: Int, val streamId: String)
+
+    /** The elements answered with, so an item the developer accepts can be inserted the way IntelliJ would. */
+    val store = ElementStore()
+
     private val log = logger<CompletionEngine>()
     private val queue = LinkedBlockingDeque<Request>()
     @Volatile private var inflight: Request? = null
@@ -143,14 +149,17 @@ class CompletionEngine(private val project: Project) : Disposable {
         val deadline = tInvoke + r.lateWaitMs * 1_000_000L
         var first: Snap? = null
         var attempts = 0
+        var site = Site(r.uri, "", 0, r.streamId)
         while (first == null && !r.superseded && System.nanoTime() < deadline) {
             attempts++
             first = edt {
                 LookupManager.hideActiveLookup(project)
                 val doc = mirror.document
-                mirror.editor.caretModel.moveToOffset(MirrorSet.offset(doc, r.position))
+                val at = MirrorSet.offset(doc, r.position)
+                site = Site(r.uri, doc.text, at, r.streamId)
+                mirror.editor.caretModel.moveToOffset(at)
                 FinishHandler { finished.set(it) }.invokeCompletion(project, mirror.editor)
-                snapshot(mirror.editor, sent, finished.get())
+                snapshot(mirror.editor, sent, finished.get(), site)
             }
             // IntelliJ sometimes declines to start a completion at all - no process,
             // no result - most often for the first request after a file is opened.
@@ -160,7 +169,7 @@ class CompletionEngine(private val project: Project) : Disposable {
             while (first == null && !r.superseded && System.nanoTime() < deadline) {
                 Thread.sleep(POLL_MS)
                 val (snap, running) = edt {
-                    snapshot(mirror.editor, sent, finished.get()) to (inProgress() != null)
+                    snapshot(mirror.editor, sent, finished.get(), site) to (inProgress() != null)
                 }
                 first = snap
                 if (first != null) break
@@ -217,7 +226,7 @@ class CompletionEngine(private val project: Project) : Disposable {
         while (last.calculating && !r.superseded) {
             if (System.nanoTime() - r.received > CAP_NANOS) { capped = true; break }
             Thread.sleep(POLL_MS)
-            last = edt { snapshot(mirror.editor, sent, finished.get()) } ?: break
+            last = edt { snapshot(mirror.editor, sent, finished.get(), site) } ?: break
             pending += last.fresh
             if (pending.isNotEmpty() && System.nanoTime() - lastEmit >= COALESCE_NANOS && last.calculating) {
                 notify(r, pending, done = false, incomplete = false)
@@ -276,7 +285,7 @@ class CompletionEngine(private val project: Project) : Disposable {
      * in-progress lookup holds. Null when there is neither yet.
      */
     private fun snapshot(editor: Editor, sent: MutableSet<LookupElement>,
-                         finished: List<LookupElement>?): Snap? {
+                         finished: List<LookupElement>?, site: Site): Snap? {
         val at = System.nanoTime()
         val items: List<LookupElement>
         val calculating: Boolean
@@ -290,7 +299,7 @@ class CompletionEngine(private val project: Project) : Disposable {
         }
         val fresh = ArrayList<JsonObject>()
         items.forEachIndexed { index, element ->
-            if (sent.add(element)) fresh += render(element, index)
+            if (sent.add(element)) fresh += render(element, index, site)
         }
         return Snap(fresh, items.size, calculating, at, System.nanoTime() - at)
     }
@@ -301,10 +310,17 @@ class CompletionEngine(private val project: Project) : Disposable {
         return (process?.lookup as? LookupImpl)?.takeUnless { it.isLookupDisposed }
     }
 
-    private fun render(element: LookupElement, index: Int): JsonObject {
+    private fun render(element: LookupElement, index: Int, site: Site): JsonObject {
         val presentation = LookupElementPresentation()
         element.renderElement(presentation)
+        val id = "${site.streamId}.$index"
+        store.put(id, element, site)
         return buildJsonObject {
+            // What `completionItem/resolve` needs: the file, and which element.
+            put("data", buildJsonObject {
+                put("uri", site.uri)
+                put("id", id)
+            })
             put("label", element.lookupString)
             put("insertText", element.lookupString)
             // IntelliJ's own ranking, preserved: the Editor must not re-sort.

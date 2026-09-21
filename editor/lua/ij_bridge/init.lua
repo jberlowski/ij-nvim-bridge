@@ -11,6 +11,9 @@ local M = {}
 
 M.name = 'ij-bridge'
 
+--- How many `$/ij/status` notifications have arrived: each clears the completion cache.
+M.status_events = 0
+
 --- The Brain's last announced state per Session (SPEC.md §8), by client id.
 M.states = {}
 
@@ -44,6 +47,7 @@ local reasons = {
 --- Called for every `$/ij/status` notification.
 function M.on_status(client_id, params)
   M.states[client_id] = params
+  M.status_events = M.status_events + 1
   -- What IntelliJ would have said may change when it stops or finishes indexing.
   require('ij_bridge.blink').clear_cache()
   vim.api.nvim_exec_autocmds('User', { pattern = 'IjBridgeStatus', modeline = false, data = params })

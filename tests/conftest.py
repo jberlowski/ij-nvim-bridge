@@ -269,6 +269,10 @@ def start_nvim(container, wait_for_blink: bool = True):
     e = Editor(c)
     e.launch(cwd=FIXTURE_PROJECT)
     nv = e.attach(timeout=120)
+    # Neovim is listening before lazy.nvim has finished loading its plugins.
+    from harness.util import wait_until
+    wait_until(lambda: nv.exec_lua("return (pcall(require, 'blink.cmp'))"), timeout=120,
+               message="blink.cmp never became loadable")
     nv.exec_lua(f"""
         vim.opt.rtp:prepend('{EDITOR_GUEST}')
         require('ij_bridge').setup()
@@ -287,7 +291,9 @@ def start_nvim(container, wait_for_blink: bool = True):
     from harness.util import wait_until
     wait_until(
         lambda: c.exec(
-            "test -f ~/.local/share/nvim/lazy/blink.cmp/target/release/libblink_cmp_fuzzy.so",
+            # The library appears before the download is over; the version file is written last.
+            "test -f ~/.local/share/nvim/lazy/blink.cmp/target/release/libblink_cmp_fuzzy.so"
+            " && test -f ~/.local/share/nvim/lazy/blink.cmp/target/release/version",
             check=False).returncode == 0,
         timeout=240, interval=1.0, message="blink.cmp never finished downloading its binary")
     return nv

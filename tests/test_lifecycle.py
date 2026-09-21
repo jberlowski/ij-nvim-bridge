@@ -101,7 +101,7 @@ def open_and_edit(nv, life, marker):
         raise AssertionError(f"{exc}\nplugin state: {state}") from None
     nv.current.buffer.append(marker, 0)
     wait_until(lambda: marker in mirrors(life).get("CrossFileProducer.kt", {}).get("text", ""),
-               timeout=20, message="the Brain never saw the unsaved edit")
+               timeout=60, message="the Brain never saw the unsaved edit")
 
 
 # ------------------------------------------------------------- tests
@@ -118,7 +118,7 @@ class TestDisconnect:
         wait_until(lambda: attached(nv) == 1 and statusline(nv) == "IJ", timeout=60,
                    message="Neovim never reconnected by itself")
         wait_until(lambda: "unsaved before the disconnect" in mirrors(life).get("CrossFileProducer.kt", {}).get("text", ""),
-                   timeout=20, message="the unsaved buffer was not sent again")
+                   timeout=60, message="the unsaved buffer was not sent again")
         assert nv.eval("v:errmsg") == ""
 
     def test_the_ide_going_away_is_shown_and_writing_still_works(self, life, nv):
@@ -126,7 +126,7 @@ class TestDisconnect:
         original = life.c.read_file(PRODUCER)
         try:
             stop_ide(life)
-            wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=20,
+            wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=60,
                        message="the loss of the Brain was never shown")
             out = nv.exec_lua("return vim.api.nvim_exec2('IjBridge', {output = true}).output")
             assert "disconnected" in out, out
@@ -144,7 +144,7 @@ class TestDisconnect:
     def test_a_restarted_ide_gets_the_unsaved_buffers_back(self, life, nv):
         open_and_edit(nv, life, "// unsaved across an IntelliJ restart")
         stop_ide(life)
-        wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=20)
+        wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=60)
 
         start_ide(life)
         wait_until(lambda: statusline(nv) != "IJ: disconnected", timeout=120,

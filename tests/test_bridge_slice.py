@@ -56,7 +56,7 @@ class TestSession:
         """Passthrough: a Capability not proven is not offered."""
         with Wire(bridge.port) as w:
             caps = w.initialize()["capabilities"]
-        assert caps["completion"] == {"streaming": True}
+        assert caps["completion"] == {"streaming": True, "resolve": True}
         assert caps["diagnostics"] is True
         assert caps["formatting"] is False
         assert caps["ij"]["ide"].startswith("IU-262")
@@ -283,11 +283,16 @@ class TestCompletion:
         wire.did_open(CONSUMER, text)
         params = {"textDocument": {"uri": uri(CONSUMER)},
                   "position": {"line": line, "character": ch}}
-        older = wire.send_request("$/ij/completion", params)
-        time.sleep(0.02)                       # older is now running on the EDT
-        newer = wire.send_request("$/ij/completion", params)
-
-        a = wire.await_response(older)
+        # A warm IntelliJ can answer inside the 20 ms below, and then nothing is superseded.
+        # Make it finish slowly, after it has been invoked, so the older is still running.
+        wire.request("$/ij/debug/completionDelay", {"ms": 600})
+        try:
+            older = wire.send_request("$/ij/completion", params)
+            time.sleep(0.2)                    # older is now running on the EDT
+            newer = wire.send_request("$/ij/completion", params)
+            a = wire.await_response(older)
+        finally:
+            wire.request("$/ij/debug/completionDelay", {"ms": 0})
         if "error" in a:
             assert a["error"]["code"] == -32800                   # replaced before it started
         else:

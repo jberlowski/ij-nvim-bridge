@@ -70,6 +70,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val signatures = SignatureHelp()
     private val formatting = Formatting(project)
     private val codeActions = CodeActions(project)
+    private val insertion = CompletionInsertion(project, brain.completion.store)
 
     companion object {
         val METHODS = setOf(
@@ -78,12 +79,12 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/selectionRange",
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
-            "textDocument/codeAction", "codeAction/resolve",
+            "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
         /** Everything that computes an edit on a copy, and so needs the write path. */
-        val EDITING = FORMATTING + "codeAction/resolve"
+        val EDITING = FORMATTING + "codeAction/resolve" + "completionItem/resolve"
         const val MAX_LOCATIONS = 5000
     }
 
@@ -119,6 +120,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                 val result = if (method in EDITING) {
                     // A write action on the EDT: never from inside a read action.
                     if (method == "codeAction/resolve") codeActions.resolve(mirror!!, params)
+                    else if (method == "completionItem/resolve") insertion.resolve(mirror!!, params)
                     else formatting.edits(mirror!!, params["range"] as? JsonObject)
                 } else {
                     ReadAction.nonBlocking(Callable { compute(method, mirror, params) })

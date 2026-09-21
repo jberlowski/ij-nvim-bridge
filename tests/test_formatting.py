@@ -17,6 +17,7 @@ from test_navigation import attached, mirror
 PROBE = f"{SRC}/probe"
 TARGET = f"{PROBE}/InspectionWarning.kt"          # any existing project file will do
 JAVA_TARGET = f"{PROBE}/JavaShapes.java"
+EC_TARGET = f"{PROBE}/Shapes.kt"       # a file no other test has asked the IDE about
 
 MESSY_KOTLIN = '''package dev.bridge.fixture.probe
 
@@ -149,11 +150,13 @@ class TestFormatting:
         `.editorconfig` asking for 2-space indentation, with Neovim asking for tabs."""
         project_files("/work/fixture/.editorconfig",
                       "root = true\n\n[*.kt]\nindent_style = space\nindent_size = 2\n")
-        # The IDE reads the file on its next VFS refresh; give it a moment, then ask.
-        open_messy(wire, TARGET, MESSY_KOTLIN)
+        # The IDE reads the file on its next VFS refresh: ask for one, rather than hope it
+        # comes soon (in a long session it did not, and the test waited in vain).
+        wire.request("$/ij/debug/refresh", {})
+        open_messy(wire, EC_TARGET, MESSY_KOTLIN)
 
         def two_space():
-            out = apply_edits(MESSY_KOTLIN, fmt(wire, TARGET))
+            out = apply_edits(MESSY_KOTLIN, fmt(wire, EC_TARGET))
             return out if "\n  fun compute(x: Int): Int {" in out else None
         out = wait_until(two_space, timeout=60, interval=2.0,
                          message="the .editorconfig indent_size was never applied")

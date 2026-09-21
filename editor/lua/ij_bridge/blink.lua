@@ -40,6 +40,9 @@ local cache = { order = {}, map = {} }
 --- Counters for the harness and for :IjBridge diagnostics.
 M.stats = { requests = 0, hits = 0, interim = 0, late = 0 }
 
+--- The last few `completionItem/resolve` round trips: label, milliseconds, error.
+M.resolves = {}
+
 function M.clear_cache()
   cache = { order = {}, map = {} }
 end
@@ -166,6 +169,8 @@ local function convert(items)
       sortText = item.sortText,
       detail = item.detail,
       labelDetails = item.labelDetails,
+      -- Names the file and the element: what resolving needs, and nothing else.
+      data = item.data,
     }
   end
   return out
@@ -273,6 +278,49 @@ function Source:get_completions(ctx, callback)
     if state.streamId then
       streams[state.streamId] = nil
       client:notify('$/ij/completionCancel', { streamId = state.streamId })
+    end
+  end
+end
+
+--- What accepting an item does, as IntelliJ does it: the import, the parentheses,
+--- the lambda braces (`completionItem/resolve`). blink.cmp asks when an item is
+--- accepted and applies the answer's `textEdit` and `additionalTextEdits`.
+--- IntelliJ's answer is only right for the text the item was offered against, so
+--- when the buffer has moved on (or anything else goes wrong) the item is handed
+--- back unchanged and the plain word is inserted, as before.
+function Source:resolve(item, callback)
+  local t0 = uv.hrtime()
+  M.resolves[#M.resolves + 1] = { label = item.label, asked = true, has_data = item.data ~= nil }
+  local bufnr = vim.api.nvim_get_current_buf()
+  local client = require('ij_bridge').client(bufnr)
+  if not client or not item.data then
+    callback(item)
+    return function() end
+  end
+  local request_id
+  local _, id = client:request('completionItem/resolve', {
+    label = item.label,
+    insertText = item.insertText,
+    data = item.data,
+  }, function(err, result)
+    M.resolves[#M.resolves + 1] = { label = item.label, ms = (uv.hrtime() - t0) / 1e6, err = err and err.message }
+    if #M.resolves > 20 then
+      table.remove(M.resolves, 1)
+    end
+    if err or not result then
+      callback(item)
+      return
+    end
+    callback(vim.tbl_extend('force', item, {
+      textEdit = result.textEdit,
+      additionalTextEdits = result.additionalTextEdits,
+      insertTextFormat = result.insertTextFormat,
+    }))
+  end, bufnr)
+  request_id = id
+  return function()
+    if request_id then
+      client:cancel_request(request_id)
     end
   end
 end

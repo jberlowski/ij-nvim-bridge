@@ -218,7 +218,7 @@ class BrainService(private val project: Project) : Disposable {
             put("triggerCharacters", kotlinx.serialization.json.JsonArray(listOf("(", ",").map { kotlinx.serialization.json.JsonPrimitive(it) }))
             put("retriggerCharacters", kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive(","))))
         })
-        put("completion", buildJsonObject { put("streaming", true) })
+        put("completion", buildJsonObject { put("streaming", true); put("resolve", true) })
         put("diagnostics", true)
         put("formatting", false)
         put("ij", buildJsonObject { put("ide", ide()) })

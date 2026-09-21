@@ -85,7 +85,7 @@ class TestDiscovery:
         bridge_container.write_file(DORMANT, "nothing to see\n")
         nvim.command(f"edit {DORMANT}")
         assert attached(nvim) == 0
-        assert nvim.exec_lua("return vim.lsp.get_clients({name = 'ij-bridge'})[1]") is None
+        assert nvim.exec_lua("return #vim.lsp.get_clients({name = 'ij-bridge', bufnr = 0})") == 0
         assert nvim.eval("v:errmsg") == ""
 
     def test_a_file_in_a_project_root_attaches(self, nvim, probe):
@@ -365,17 +365,24 @@ class TestIncrementalCompletion:
         assert stats(nvim)["hits"] >= 1
 
     def test_backspacing_returns_to_an_answered_state_instantly(self, nvim, probe, bridge_container):
+        import time
         large_surface(nvim, bridge_container)
         probe_line(nvim, "comp")
+        t0 = time.monotonic()
         first = complete(nvim)
         probe_line(nvim, "compu")
         complete(nvim)
         asked = probe.debug_state()["completionRequests"]
+        status_seen = nvim.exec_lua("return require('ij_bridge').status_events")
 
         probe_line(nvim, "comp")                         # backspace
+        took = time.monotonic() - t0
         back = complete(nvim, "computeMetricNumber000")
 
-        assert probe.debug_state()["completionRequests"] == asked
+        assert probe.debug_state()["completionRequests"] == asked, (
+            f"{took:.1f}s since the first answer was cached (the cache keeps answers for 5 s)", stats(nvim),
+            f"status events {status_seen} -> {nvim.exec_lua('return require(\'ij_bridge\').status_events')}",
+            nvim.exec_lua("return require('ij_bridge').states"))
         assert back["count"] == first["count"], "the earlier answer, whole, not a subset"
         assert back["found"]["computeMetricNumber000"]
 

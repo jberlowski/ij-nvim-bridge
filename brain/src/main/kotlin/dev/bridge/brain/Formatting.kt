@@ -109,7 +109,31 @@ object TextEdits {
         return out
     }
 
-    private fun edit(text: String, start: Int, end: Int, newText: String) = buildJsonObject {
+    /** A changed span: [start1, end1) of the old text became [start2, end2) of the new. */
+    class Region(val start1: Int, val end1: Int, val start2: Int, val end2: Int)
+
+    /** The changed spans between [a] and [b], each trimmed of the text it shares at either end. */
+    fun regions(a: String, b: String): List<Region> {
+        if (a == b) return emptyList()
+        val fragments = try {
+            ComparisonManager.getInstance().compareLines(a, b, ComparisonPolicy.DEFAULT, EmptyProgressIndicator())
+        } catch (t: Throwable) {
+            listOf(null)
+        }
+        val la = lineStarts(a)
+        val lb = lineStarts(b)
+        return fragments.map { f ->
+            var s1 = if (f == null) 0 else la.getOrElse(f.startLine1) { a.length }
+            var e1 = if (f == null) a.length else la.getOrElse(f.endLine1) { a.length }
+            var s2 = if (f == null) 0 else lb.getOrElse(f.startLine2) { b.length }
+            var e2 = if (f == null) b.length else lb.getOrElse(f.endLine2) { b.length }
+            while (s1 < e1 && s2 < e2 && a[s1] == b[s2]) { s1++; s2++ }
+            while (e1 > s1 && e2 > s2 && a[e1 - 1] == b[e2 - 1]) { e1--; e2-- }
+            Region(s1, e1, s2, e2)
+        }
+    }
+
+    fun edit(text: String, start: Int, end: Int, newText: String) = buildJsonObject {
         put("range", buildJsonObject {
             put("start", Locations.position(text, start))
             put("end", Locations.position(text, end))
