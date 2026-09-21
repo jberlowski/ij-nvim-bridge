@@ -57,6 +57,11 @@ class BrainService(private val project: Project) : Disposable {
     val completion = CompletionEngine(project, record).also { Disposer.register(this, it) }
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
+    val inlayHints = InlayHints(project, this).also {
+        Disposer.register(this, it)
+        mirrors.onOpened = { m -> it.watch(m) }
+        mirrors.onReleased = { uri -> it.unwatch(uri) }
+    }
 
     private val transports = java.util.concurrent.CopyOnWriteArraySet<Transport>()
 
@@ -234,6 +239,7 @@ class BrainService(private val project: Project) : Disposable {
             put("resolveProvider", true) // titles now, edits on resolve (FEATURES.md D3)
         })
         put("renameProvider", buildJsonObject { put("prepareProvider", true) })
+        put("inlayHintProvider", buildJsonObject { put("resolveProvider", false) })
         put("workspace", buildJsonObject {
             put("fileOperations", buildJsonObject {
                 val filters = kotlinx.serialization.json.JsonArray(listOf(buildJsonObject {

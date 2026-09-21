@@ -66,7 +66,7 @@ class TestSession:
 
     def test_unknown_request_is_answered_not_ignored(self, wire):
         with pytest.raises(RpcError) as e:
-            wire.request("textDocument/inlayHint", {})          # not implemented yet (FEATURES.md §3)
+            wire.request("textDocument/prepareCallHierarchy", {})          # not implemented yet (FEATURES.md §3)
         assert e.value.code == -32601
 
     def test_a_failing_handler_reports_instead_of_stalling(self, wire):

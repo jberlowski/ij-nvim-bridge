@@ -119,6 +119,7 @@ class MirrorSet(private val project: Project) : Disposable {
         mirror.owners += owner
         MirroredFiles.add(file)
         mirrors[uri] = mirror
+        runCatching { onOpened?.invoke(mirror) }   // a watcher failing must never fail an open
     }
 
     /**
@@ -185,8 +186,15 @@ class MirrorSet(private val project: Project) : Disposable {
         return released
     }
 
+    /** Called when a Mirror gets an editor, and again when it gets a new one (a tab was evicted). */
+    @Volatile var onOpened: ((Mirror) -> Unit)? = null
+
+    /** Called when a Mirror is released. */
+    @Volatile var onReleased: ((String) -> Unit)? = null
+
     private fun release(uri: String) {
         val m = mirrors.remove(uri) ?: return
+        onReleased?.invoke(uri)
         closingByUs += m.file
         try {
             edt {
@@ -225,6 +233,7 @@ class MirrorSet(private val project: Project) : Disposable {
     private fun reopen(lost: Mirror) {
         if (mirrors[lost.uri] !== lost) return
         lost.editor = openEditor(lost.file)
+        runCatching { onOpened?.invoke(lost) }
     }
 
     private fun resolve(uri: String): VirtualFile? =

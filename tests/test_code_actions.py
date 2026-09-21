@@ -269,8 +269,14 @@ def offered(w, path, text, needle, into, title, only=None, timeout=60):
         ctx = {"diagnostics": []}
         if only is not None:
             ctx["only"] = only
-        found = w.request("textDocument/codeAction", {
-            "textDocument": {"uri": uri(path)}, "range": {"start": pos, "end": pos}, "context": ctx}, timeout=90)
+        try:
+            found = w.request("textDocument/codeAction", {
+                "textDocument": {"uri": uri(path)}, "range": {"start": pos, "end": pos}, "context": ctx}, timeout=90)
+        except RpcError as e:
+            if e.code != -32801 or time.monotonic() > deadline:      # "IntelliJ is indexing; ask again"
+                raise
+            time.sleep(2)
+            continue
         match = [a for a in found if title in a["title"]]
         if match or time.monotonic() > deadline:
             assert match, f"{title!r} never offered; got {[a['title'] for a in found]}"
@@ -280,7 +286,14 @@ def offered(w, path, text, needle, into, title, only=None, timeout=60):
 
 def applied(w, path, text, needle, into, title, **kw):
     action, _ = offered(w, path, text, needle, into, title, **kw)
-    resolved = w.request("codeAction/resolve", action, timeout=90)
+    for attempt in range(10):
+        try:
+            resolved = w.request("codeAction/resolve", action, timeout=90)
+            break
+        except RpcError as e:
+            if e.code != -32801 or "indexing" not in str(e) and "not ready" not in str(e) or attempt == 9:
+                raise
+            time.sleep(2)
     return apply_edits(text, resolved["edit"]["changes"].get(uri(path), [])), resolved
 
 

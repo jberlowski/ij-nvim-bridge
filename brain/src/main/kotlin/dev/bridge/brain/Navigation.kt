@@ -83,12 +83,12 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
             "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
-            "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles", "\$/ij/newFile",
+            "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles", "\$/ij/newFile", "textDocument/inlayHint",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
         /** Everything that computes an edit on a copy, and so needs the write path. */
-        val EDITING = FORMATTING + "codeAction/resolve" + "completionItem/resolve" + "textDocument/rename"
+        val EDITING = FORMATTING + "codeAction/resolve" + "completionItem/resolve" + "textDocument/rename" + "textDocument/inlayHint"
         const val MAX_LOCATIONS = 5000
     }
 
@@ -132,6 +132,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                     if (method == "codeAction/resolve") codeActions.resolve(mirror!!, params)
                     else if (method == "completionItem/resolve") insertion.resolve(mirror!!, params)
                     else if (method == "textDocument/rename") renames.rename(mirror!!, params)
+                    else if (method == "textDocument/inlayHint") edt { brain.inlayHints.hints(mirror!!, params["range"] as? JsonObject) }
                     else formatting.edits(mirror!!, params["range"] as? JsonObject)
                 } else {
                     ReadAction.nonBlocking(Callable { compute(method, mirror, params) })

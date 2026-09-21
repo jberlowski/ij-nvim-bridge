@@ -103,6 +103,17 @@ LSP has no vocabulary for these; they are `workspace/executeCommand` commands an
 | **Debugger** | out of scope | DAP is a different protocol and a different project. |
 | **Database, HTTP client, UML** | out of scope | Not language intelligence. |
 
+## 6c. To do (asked for, not started)
+
+Requested and written down with how it would be built; the order is the developer's to set.
+
+**Tests: go to the test, go to the code under test, run the test, and see what can be run in the sign column.** Asked for together, and they share one thing to build (finding what is a test):
+
+- **Go to test / go to the class under test** (`$/ij/testTargets`, and `<leader>it`). IntelliJ's own Go to Test (Ctrl+Shift+T): from a class, its test(s); from a test, the class it tests; and, when there is none, offer to create one from the test template. Language-agnostic in the platform (`TestFinderHelper.findTestsForClass` / `findClassesForTest`), answered as `Location[]` like Go to Implementation, so it is cheap and should come first. From a test method, ideally the method under test where the naming convention gives it.
+- **What can be run, shown in the sign column.** The IDE already knows which lines have a run icon in its gutter: the daemon's line markers on the Mirror's editor carry `RunLineMarkerContributor` infos (JUnit 4 and 5, Kotlin tests, `main`), each with its Run and Debug actions. The Brain harvests them, as it does diagnostics and inlay hints, so they are exactly the IDE's own and follow its rules and its settings. Published as a `$/ij/runnables` notification per file (line, kind, title) or as a code lens; the Editor places `▶` in the sign column with extmark `sign_text`, and changes it to a pass or fail sign once a result is known. A code lens is the standard surface, but Neovim draws lenses as virtual text, not in the sign column, so the signs are Editor-side (an extension).
+- **Run the test** (nearest, this class, this file, and repeat the last; `<leader>ir`, `<leader>iR`). The Run action of the marker is performed for the position, which creates IntelliJ's own (temporary) run configuration, so Gradle versus IntelliJ runner, JVM arguments and the working directory are the project's own settings (Borrowed Settings). Output streams back as `$/ij/run/output` notifications to a terminal-like buffer or the quickfix list; the test tree (`SMTRunnerEventsListener`) gives per-test pass and fail, which become the signs, and failures with their stack traces become diagnostics or quickfix entries with locations. A stop request cancels the process.
+- **Depends on, and replaces the first half of, "Running IntelliJ tasks and Gradle tasks" in §6b**: running a test is running a run configuration. Debugging a test from the same sign stays a DAP project (§6b).
+
 ## 6b. Someday / wish list
 
 Not planned, not designed, no priority. Written down so the idea is not lost.
@@ -131,6 +142,8 @@ Examples, all reached through the standard methods above: bean navigation and `@
 
 The `$/ij/*` methods this document introduces, gathered. Each must also be reachable through a standard surface (code action, command, code lens) where one exists.
 
+**Keys.** Everything that is not a standard LSP feature is bound, by default, under **`<leader>i`** (IntelliJ), in `require('ij_bridge').setup{ prefix = '<leader>i', keys = true }`, and is also a `:IjBridge` subcommand. LazyVim's own AI extras (Claude Code, Avante, Copilot Chat, Sidekick) claim `<leader>a` as "+ai", so `a` is not free; across LazyVim's core and all of its extras `i`, `j`, `k`, `v`, `y` and `z` are never used, and `i` was chosen for the mnemonic. An existing mapping is never overwritten. Standard features stay on LazyVim's own keys (`gd`, `grr`, `<leader>ca`, `<leader>cr`, `<leader>cf`, and so on): generate code, for one, is a `source.generate` code action.
+
 ```
 $/ij/focus              C→S  notification  the Editor's active buffer changed (selects the Mirror; drives the daemon)
 $/ij/status             S→C  notification  Brain state: Indexing / Ready, and why
@@ -138,6 +151,11 @@ $/ij/fileChanged        S→C  notification  a Mirrored file changed on disk out
 $/ij/reimport           C→S  request      re-import the Gradle/Maven model
 $/ij/runConfigurations  C→S  request      list run configurations (Tier 4)
 $/ij/search             C→S  request      IDE-scoped project search (Tier 4)
+$/ij/newFile            C→S  request      text and place for a new class from a template (built; <leader>in)
+$/ij/log                C→S  request      the Brain log's level and path (built; <leader>il...)
+$/ij/testTargets        C→S  request      the test for a class, or the class for a test (to do; <leader>it)
+$/ij/runnables          S→C  notification what can be run in a file, for the sign column (to do)
+$/ij/run, run/output    C↔S  request, notification  run a test or configuration, stream its output and results (to do)
 ```
 
 ## 10. Decisions
@@ -193,6 +211,12 @@ All four were taken by the maintainer; each records what was chosen and why it h
    - **Steps that need a person are refused with a reason, not half done**: "Specify type explicitly" starts a live template (`ModStartTemplate`), choosing members, renaming in place, editing options, creating or moving a file (`this action needs more than a text edit (ModStartTemplate)`), as `-32602`. A few offered actions are no-ops as edits ("Copy concatenation text to clipboard" resolves to no edits).
    - The Mirror's caret and selection are set to the request's range first (what is available depends on both), so this is not the cancellable read-action path alone; the fixes for an error appear once the daemon has analysed the file, so a request made the moment a file is opened may offer only intentions (the tests ask again, as a developer would).
    - An action is found again at resolve by its family and title at the same range; the buffer having changed is `ContentModified`.
+
+5g. **Inlay hints built.** `textDocument/inlayHint`, tested on the wire (Kotlin and Java, ranges, unsaved edits) and through `vim.lsp.inlay_hint`. Harvested, as diagnostics are, from the inlays IntelliJ's own passes put on the Mirror's editor (which analyses a showing editor), so they are the developer's IDE's own hints, **by the developer's own inlay settings (a Borrowed Setting), for the unsaved text**; no provider is reimplemented. Two kinds of inlay carry the text: the declarative ones (Kotlin's parameter names, and newer hints), read from `DeclarativeInlayRenderer`'s presentation entries, and the older parameter-name hints (Java's), from `ParameterHintsPresentationManager.getHintText`. What is not a text hint is left out: the code-vision inlays at line ends (usage counts, "implements") are what a **code lens** would carry, and are for that feature. Things worth knowing:
+   - **The passes finish after the file is opened and again after every edit**, so a request can be answered before they have. The Brain watches each Mirror's inlay model (`InlayModel.Listener`, attached on the EDT) and, once the inlays have settled for 300 ms and really changed, sends the client a `workspace/inlayHint/refresh` request; Neovim's handler asks again. Without it the client asks once, too early, and shows nothing until the next keystroke. Tested through Neovim, including hints for a call typed later, without the test asking again.
+   - The kind is `Parameter` for parameter names (with right padding) and `Type` for types; a hint of unknown origin is sent without a kind.
+   - Declarative hints are reached through a getter that Kotlin sees as private, called reflectively, so a change in IntelliJ skips those hints and breaks nothing else. Which hints there are (types of locals, chained calls, lambda returns) is the IDE's setting: a hint that is off in the developer's IDE is off here.
+   - Found by the Brain's own log, the first time it was needed: attaching the inlay listener off the EDT threw inside `didOpen`. A watcher failing can no longer fail an open.
 
    Original plan for this step, kept for the remaining items: formatting and organize imports first (the project's motivation, and smallest: one copy, one diff), then completion insertion, then code actions (D3), then rename (D2).
 5. **On-save and generation:** format-on-save, generate code, extract/inline/move.
