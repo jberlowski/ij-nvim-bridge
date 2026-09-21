@@ -150,8 +150,13 @@ class CodeActions(private val project: Project) {
     private fun wanted(kind: String, only: List<String>?): Boolean =
         only.isNullOrEmpty() || only.any { kind == it || kind.startsWith("$it.") }
 
+    /**
+     * Not for a Kotlin script (`*.kts`, Gradle's build scripts among them): the optimiser needs the script's own
+     * analysis context, which a copy of the file does not carry, and it fails inside K2 on the DSL's calls
+     * (`KaBaseInvokeFunctionReference ... is missing in the map`). An action that can only fail is not offered.
+     */
     private fun supportsImports(file: PsiFile) =
-        LanguageImportStatements.INSTANCE.forFile(file).any { it.supports(file) }
+        !file.name.endsWith(".kts") && LanguageImportStatements.INSTANCE.forFile(file).any { it.supports(file) }
 
     // ----------------------------------------------------------------- resolve
     /** Not in a read action: it needs a write action on the EDT (on a copy). */
