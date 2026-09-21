@@ -94,8 +94,16 @@ class Ide:
         return self.c.exec(f"tail -{lines} {LOG} 2>/dev/null", check=False).stdout
 
     def is_running(self) -> bool:
-        return bool(self.c.exec("pgrep -f '/opt/idea' | head -1",
-                                check=False).stdout.strip())
+        # By process name, not `pgrep -f`: the shell running this command has
+        # "/opt/idea" in its own command line, so -f always matched itself and
+        # reported a dead IDE as running.
+        return bool(self.c.exec("pgrep -x idea | head -1", check=False).stdout.strip())
+
+    def kill(self) -> None:
+        """A crash: SIGKILL, so nothing shuts down cleanly and the Brain cannot
+        withdraw its Registry entry. A plain `quit` (SIGTERM) can take over half a
+        minute to finish."""
+        self.c.exec("pkill -9 -x idea; pkill -9 -x fsnotifier; true", check=False)
 
     def quit(self) -> None:
         self.c.exec("pkill -f '/opt/idea' || true", check=False)

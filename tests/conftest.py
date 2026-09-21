@@ -146,12 +146,11 @@ def bridge_container():
             c.stop()
 
 
-@pytest.fixture(scope="session")
-def bridge(bridge_container):
+def start_bridge(container) -> Brain:
     """The Brain plugin, running in an IDE that has finished importing."""
     if not BRAIN_ZIP.exists():
         pytest.skip(f"brain plugin not built: {BRAIN_ZIP} (run make brain)")
-    c = bridge_container
+    c = container
     ide = Ide(c)
     ide.trust()
     ide.install_plugin(BRAIN_ZIP)
@@ -167,6 +166,11 @@ def bridge(bridge_container):
     b.ide = ide
     sync_fixture(c, b)
     return b
+
+
+@pytest.fixture(scope="session")
+def bridge(bridge_container):
+    return start_bridge(bridge_container)
 
 
 @pytest.fixture
@@ -192,6 +196,8 @@ def wire(bridge):
             w.notify("textDocument/didClose", {"textDocument": {"uri": m["uri"]}})
         w.request("$/ij/debug/setTabLimit", {"limit": 30})
         w.close()
+
+
 
 
 @pytest.fixture
@@ -256,10 +262,9 @@ EDITOR_DIR = REPO_ROOT / "editor"
 EDITOR_GUEST = "/home/dev/ij-nvim-bridge/editor"
 
 
-@pytest.fixture(scope="session")
-def nvim_session(bridge, bridge_container):
-    """Neovim (LazyVim, blink.cmp) running the Editor plugin against the Brain."""
-    c = bridge_container
+def start_nvim(container, wait_for_blink: bool = True):
+    """Neovim (LazyVim, blink.cmp) running the Editor plugin."""
+    c = container
     c.copy_in(EDITOR_DIR, EDITOR_GUEST)
     e = Editor(c)
     e.launch(cwd=FIXTURE_PROJECT)
@@ -272,6 +277,8 @@ def nvim_session(bridge, bridge_container):
           module = 'ij_bridge.blink', name = 'IntelliJ', async = true }})
         blink.add_filetype_source('kotlin', 'ij_bridge')
     """)
+    if not wait_for_blink:
+        return nv
     # blink.cmp fetches its fuzzy-matching binary over the network the first time
     # it loads, in every fresh container: it is not baked into the image. A test
     # that types before that finishes sees "the menu never appeared". Load it now
@@ -284,6 +291,35 @@ def nvim_session(bridge, bridge_container):
             check=False).returncode == 0,
         timeout=240, interval=1.0, message="blink.cmp never finished downloading its binary")
     return nv
+
+
+@pytest.fixture(scope="session")
+def nvim_session(bridge, bridge_container):
+    return start_nvim(bridge_container)
+
+
+# ------------------------------------------------------- the lifecycle container
+# IntelliJ is restarted and killed in these tests, which would wreck the shared
+# IDE every other test uses (a relaunched IDE loses its imported model). They get
+# a container of their own, on their own ports, for the length of one module.
+@pytest.fixture(scope="module")
+def life_container():
+    c = Container.start(novnc_port=6083, nvim_port=7780, brain_port=7881)
+    try:
+        yield c
+    finally:
+        if os.environ.get("HARNESS_KEEP") != "1":
+            c.stop()
+
+
+@pytest.fixture(scope="module")
+def life(life_container):
+    return start_bridge(life_container)
+
+
+@pytest.fixture(scope="module")
+def life_nvim_session(life, life_container):
+    return start_nvim(life_container, wait_for_blink=False)
 
 
 @pytest.fixture(scope="session")

@@ -147,6 +147,14 @@ buffer :bd              → didClose
 
 `didOpen` carries the buffer's text, which may differ from disk. Per LSP, the Brain must not read disk for an open document.
 
+### 5.3a Ownership and connection lifecycle
+
+**Ownership.** A Mirror belongs to the project but records the Sessions that have it open. `didClose` from one Session does not release a Mirror another still holds; the Mirror goes when none do. A Session that goes away, cleanly or not (Neovim quit, crashed, or the socket dropped), has its claims dropped, its diagnostics cleared and its queued completions cancelled, so no unsaved buffer is held for an editor that no longer exists. A second Session opening an already-Mirrored file joins it and does **not** replace its text: the first editor's unsaved buffer is what the Mirror holds, and nothing could put it back. Two editors editing one file at once remains unsupported.
+
+**Line endings.** Neovim sends a `fileformat=dos` buffer with `\r\n`, and IntelliJ documents accept only `\n`, so the Brain normalises on the way in. The Mirror holds logical text; the file on disk keeps whatever endings the Editor writes.
+
+**The Brain goes away.** IntelliJ quits, restarts or crashes, or the socket drops. The Neovim plugin notices, shows `IJ: disconnected` in the status line (and in `:IjBridge`), and keeps working exactly as if the Bridge were not installed; `:w` in particular must never fail or block. It retries with backoff (0.5 s, 1 s, 2 s, 4 s, 8 s, then every 10 s) and only trusts a Registry entry whose process is alive, so a crashed IDE's stale entry is ignored. When a Brain returns, every buffer that should be Mirrored is attached again, which re-sends its current text: the new Brain knows nothing, and unsaved buffers are exactly what it must be told. A buffer opened while the Brain was away was never attached, so it attaches at its next `BufEnter` once the Brain is back. A relaunched IDE has lost its imported model and reports Indexing until it re-imports.
+
 ### 5.4 Saving
 
 The Editor writes to disk. The Brain never does. See [ADR-0003](./docs/adr/0003-editor-owns-disk-writes.md).

@@ -234,6 +234,14 @@ A host-side `connect()` proves nothing about socat: Docker's port forwarder acce
 
 Both publish a Registry and a socket for the same Project Root. The Bridge tests get their own container (`bridge_container`, other host ports) and the canary suite keeps its own. Build both: `make canary brain`.
 
+### `Ide.is_running()` could not report a stopped IDE
+
+It used `pgrep -f '/opt/idea'`, and the shell running that very command has `/opt/idea` in its own command line, so it always matched itself. It now matches the process name (`pgrep -x idea`). Separately, `Ide.quit()` is SIGTERM and can take over 30 seconds to finish; `Ide.kill()` is SIGKILL, which is also the honest simulation of a crash: nothing shuts down and the Registry entry goes stale.
+
+### Lifecycle tests get a container of their own
+
+`test_lifecycle.py` kills and restarts IntelliJ, and a relaunched IDE loses its imported model, which would break every other test sharing it. The `life_container`, `life` and `life_nvim_session` fixtures are module-scoped on ports 6083, 7780 and 7881. They wait for the restarted Brain to *publish itself*, not to be Ready, since they test the connection and not the analysis. The plugin keeps a short bounded trail of connection events (`require('ij_bridge').events`), which the tests print on failure: the reconnect loop's bugs (a loop retrying an unloaded buffer forever, a guard blocking a healthy attach) were only findable that way.
+
 ### The Brain's startup is traced
 
 `Brain.await_ready` records `(state reported, import commits so far)` at every poll in `Brain.trace`. `test_the_brain_never_claimed_ready_before_the_import_finished` reads it: Ready before the first import commit would mean serving *not resolved until the project is fully loaded*, and the trace must also contain an Indexing sample or the test proves nothing. `$/ij/debug/indexing` puts IntelliJ into dumb mode for a chosen time so the Indexing state can be provoked on demand.
