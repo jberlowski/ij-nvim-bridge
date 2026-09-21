@@ -274,6 +274,14 @@ Buffers left by one test, and a Mirror they keep alive, change what the next tes
 
 `fsnotifier` exits at start (a zombie in `ps`), so nothing tells the IDE about files written behind its back, which a real IDE with a working watcher hears within a moment. The harness compensates with `$/ij/debug/refresh` (`project_files` and the move tests use it), and the Brain itself refreshes what Neovim tells it changed (`didSave`, `didRenameFiles`, `didCreateFiles`, `didDeleteFiles`). Why the watcher exits has not been found. Any test that writes a file with `docker exec` and then asks the IDE about it must refresh first.
 
+### blink.cmp can abort an accept by itself
+
+Found by the gold-standard test failing in about half of full runs: `require('blink.cmp').accept` calls `trigger.hide()` first, which closes the documentation float, and `nvim_win_close` raises `Invalid window id` when that float has already gone (a race with the float being shown for the highlighted item). The error aborts the accept before anything is resolved or inserted, and the buffer is left as it was. It is upstream's bug, not the Bridge's (the Brain's resolve had answered in 10 ms), and a developer with `documentation.auto_show` could meet it. The harness guards `window:close` so that a test of what the Bridge does is not decided by it; nothing is done about it for users.
+
+### Nothing in the lifecycle Neovim may reach the network
+
+The lifecycle tests' Neovim never completes anything, but blink.cmp still fetched its binary on the first insert, and a failed download (`curl: (22)`) put an error in `v:errmsg`, which those tests assert is empty. It now uses blink's Lua fuzzy matcher with downloads off.
+
 ## 14. Open
 
 - **blink.cmp's binary is not baked into the image.** It downloads at first use in every container, so the harness needs network and the `nvim_session` fixture waits for it. Baking it into the image (`nvim --headless` with blink loaded, at build time) would remove the network dependency and about a minute per run.

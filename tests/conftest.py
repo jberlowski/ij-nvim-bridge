@@ -321,7 +321,27 @@ def start_nvim(container, wait_for_blink: bool = True):
         blink.add_filetype_source('kotlin', 'ij_bridge')
     """)
     if not wait_for_blink:
+        # This Neovim never completes anything: it must not fetch blink.cmp's binary either. The
+        # download can fail (no network) and its error would land in v:errmsg, which tests assert on.
+        nv.exec_lua("""
+            local cfg = require('blink.cmp.config')
+            cfg.fuzzy.implementation = 'lua'
+            cfg.fuzzy.prebuilt_binaries.download = false""")
         return nv
+    # blink.cmp's documentation window can raise "Invalid window id" while it is closed by `accept`
+    # (`trigger.hide` -> `windows.documentation.close` -> `nvim_win_close` on a float that is already
+    # gone), which aborts the accept: nothing is inserted. An upstream race, seen when the menu is
+    # closed as a highlighted item's documentation is being shown. Guard the close, so that a test of
+    # what the Bridge does is not decided by it.
+    nv.exec_lua("""
+        local win = require('blink.cmp.lib.window')
+        local close = win.close
+        win.close = function(self)
+          if self.id ~= nil and not vim.api.nvim_win_is_valid(self.id) then
+            self.id = nil
+          end
+          return close(self)
+        end""")
     # blink.cmp fetches its fuzzy-matching binary over the network the first time
     # it loads, in every fresh container: it is not baked into the image. A test
     # that types before that finishes sees "the menu never appeared". Load it now

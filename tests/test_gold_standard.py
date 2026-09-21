@@ -157,7 +157,8 @@ def test_create_move_use_and_import(nvim, probe, bridge_container, workspace):
                              f"accept: {accepting}\n"
                              f"resolves: {nvim.exec_lua('return vim.inspect(require(chr).resolves)'.replace('chr', repr('ij_bridge.blink')))}\n"
                              f"menu visible: {nvim.exec_lua('return require(chr).is_menu_visible()'.replace('chr', repr('blink.cmp')))}\n"
-                             f"messages: {nvim.command_output('messages')[-600:]}\n"
+                             f"errmsg: {nvim.eval('v:errmsg')}\n"
+                             f"messages: {nvim.command_output('messages')[-3500:]}\n"
                              f"editor log: {[l[:160] for l in nvim.exec_lua('return vim.fn.readfile(require(chr).path)'.replace('chr', repr('ij_bridge.log')))[-14:]]}") from None
     nvim.command("stopinsert")
     assert "val t: Ticket" in text_of(nvim)

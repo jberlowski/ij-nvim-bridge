@@ -239,7 +239,12 @@ class TestCompletion:
     def test_items_are_intellijs_own_and_in_its_order(self, bridge_container, wire):
         text, line, ch = large_surface(bridge_container)
         wire.did_open(CONSUMER, text)
-        first, batches = wire.complete(CONSUMER, line, ch)
+        # A Stream that IntelliJ cannot finish within the Cap ends `isIncomplete`, by design, and the
+        # Editor asks again on the next keystroke. A cold or busy IDE can be capped: ask again.
+        for _ in range(5):
+            first, batches = wire.complete(CONSUMER, line, ch)
+            if not (batches[-1] if batches else first).get("isIncomplete"):
+                break
         items = all_items(first, batches)
 
         labels = [i["label"] for i in items]
