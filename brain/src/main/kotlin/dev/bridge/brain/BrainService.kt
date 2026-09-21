@@ -207,6 +207,11 @@ class BrainService(private val project: Project) : Disposable {
         put("workspaceSymbolProvider", true)
         put("foldingRangeProvider", true)
         put("selectionRangeProvider", true)
+        put("codeActionProvider", buildJsonObject {
+            put("codeActionKinds", kotlinx.serialization.json.JsonArray(
+                CodeActions.KINDS.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+            put("resolveProvider", true) // titles now, edits on resolve (FEATURES.md D3)
+        })
         put("documentFormattingProvider", true)
         put("documentRangeFormattingProvider", true)
         put("signatureHelpProvider", buildJsonObject {

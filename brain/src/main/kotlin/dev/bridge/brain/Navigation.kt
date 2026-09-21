@@ -69,6 +69,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val structure = StructureFeatures(project, locations)
     private val signatures = SignatureHelp()
     private val formatting = Formatting(project)
+    private val codeActions = CodeActions(project)
 
     companion object {
         val METHODS = setOf(
@@ -77,14 +78,19 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/selectionRange",
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
+            "textDocument/codeAction", "codeAction/resolve",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
+        /** Everything that computes an edit on a copy, and so needs the write path. */
+        val EDITING = FORMATTING + "codeAction/resolve"
         const val MAX_LOCATIONS = 5000
     }
 
     fun submit(method: String, id: JsonElement?, params: JsonObject, transport: Transport) {
+        // codeAction/resolve carries the action, not a textDocument: its data names the file.
         val uri = params["textDocument"]?.jsonObject?.get("uri")?.jsonPrimitive?.contentOrNull
+            ?: params["data"]?.jsonObject?.get("uri")?.jsonPrimitive?.contentOrNull
         val mirror = uri?.let { brain.mirrors.get(it) }
         // workspace/symbol asks about the project, not about a buffer.
         if (mirror == null && method != "workspace/symbol") {
@@ -110,9 +116,10 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                     val at = MirrorSet.offset(mirror!!.document, params["position"]!!.jsonObject)
                     edt { mirror.editor.caretModel.moveToOffset(at) }
                 }
-                val result = if (method in FORMATTING) {
+                val result = if (method in EDITING) {
                     // A write action on the EDT: never from inside a read action.
-                    formatting.edits(mirror!!, params["range"] as? JsonObject)
+                    if (method == "codeAction/resolve") codeActions.resolve(mirror!!, params)
+                    else formatting.edits(mirror!!, params["range"] as? JsonObject)
                 } else {
                     ReadAction.nonBlocking(Callable { compute(method, mirror, params) })
                         .wrapProgress(job.indicator)
@@ -127,6 +134,8 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             } catch (_: ProcessCanceledException) {
                 if (job.cancelled.get()) job.cancel()
                 else job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "content modified"))
+            } catch (_: CodeActions.StaleAction) {
+                job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "the buffer changed since the action was offered"))
             } catch (_: IndexNotReadyException) {
                 job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "IntelliJ is indexing; ask again when it is done"))
             } catch (t: Throwable) {
@@ -169,6 +178,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/hover" -> hover(editor, file, offset)
             "textDocument/documentHighlight" -> highlights(editor, file, offset)
             "textDocument/signatureHelp" -> signatures.signatureHelp(project, editor, file, offset)
+            "textDocument/codeAction" -> codeActions.list(mirror, params)
             "textDocument/documentSymbol" -> structure.documentSymbols(editor, file)
             "textDocument/foldingRange" -> structure.foldingRanges(file, doc)
             "textDocument/selectionRange" -> structure.selectionRanges(

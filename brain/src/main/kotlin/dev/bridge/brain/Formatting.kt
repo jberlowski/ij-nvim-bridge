@@ -72,11 +72,17 @@ class Formatting(private val project: Project) {
             }
             result
         }
-        return JsonArray(diff(original, formatted))
+        return JsonArray(TextEdits.diff(original, formatted))
     }
+}
+
+
+/** Minimal line-based LSP `TextEdit[]` between two texts. Shared by every edit feature. */
+object TextEdits {
+    private val log = logger<TextEdits>()
 
     /** Minimal line-based edits turning [a] into [b]. */
-    private fun diff(a: String, b: String): List<JsonObject> {
+    fun diff(a: String, b: String): List<JsonObject> {
         if (a == b) return emptyList()
         val fragments = try {
             ComparisonManager.getInstance().compareLines(a, b, ComparisonPolicy.DEFAULT, EmptyProgressIndicator())
