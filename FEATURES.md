@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge - Feature specification
 
-Status: **planning.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
+Status: **planning, decisions D1-D4 taken.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
 
 ## 1. The principle: it looks like ordinary LSP
 
@@ -17,7 +17,7 @@ These apply to every feature and are where the real work is.
 
 **Answer from the Mirror, not from disk.** Every request that names a buffer is answered against the Mirror's text at the version the Editor last sent ([SPEC.md §5](./SPEC.md)). A result that *points into another file* must also respect that file's Mirror when it has one: go-to-definition into an unsaved buffer lands on the line as the Editor sees it, not as disk has it. Positions are converted from IntelliJ offsets through the Mirror's document, never through disk.
 
-**Locations that are not files.** Definitions, references and hierarchy results frequently land in library code: a class inside a jar, a decompiled `.class`, a JDK source. LSP locations are URIs, and Neovim can open only what it can read. Needs a decision (§10, D1). Candidates: a read-only virtual document served by the Brain over `workspace/textDocumentContent` (LSP 3.18) or a `BufReadCmd` provider in the Neovim plugin; extracting to a cache directory is the fallback. Whichever is chosen must give the buffer a sensible name and make it read-only.
+**Locations that are not files.** Definitions, references and hierarchy results frequently land in library code: a class inside a jar, a decompiled `.class`, a JDK source. LSP locations are URIs, and Neovim can open only what it can read. **Decided (§10, D1):** the Brain extracts the source or decompiled text to a read-only file in a cache directory and returns a `file://` URI, behind one function so a virtual document can replace it later.
 
 **Edits are computed, never applied to the Mirror.** Refactorings, quick fixes, formatting and import optimisation all *modify documents* when run natively in IntelliJ. The Bridge must instead return a `WorkspaceEdit` for Neovim to apply to its buffers, because the Editor owns the bytes ([ADR-0003](./docs/adr/0003-editor-owns-disk-writes.md)). IntelliJ's `ModCommand` API (`ModUpdateFileText`, `ModNavigate`, `ModCompositeCommand`) already expresses actions as data and is the preferred source; refactorings and older intentions that mutate in place need one of the approaches in §10, D2.
 
