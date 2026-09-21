@@ -71,6 +71,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val formatting = Formatting(project)
     private val codeActions = CodeActions(project)
     private val insertion = CompletionInsertion(project, brain.completion.store)
+    private val renames = Rename(project, locations)
 
     companion object {
         val METHODS = setOf(
@@ -80,11 +81,12 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
             "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
+            "textDocument/prepareRename", "textDocument/rename",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
         /** Everything that computes an edit on a copy, and so needs the write path. */
-        val EDITING = FORMATTING + "codeAction/resolve" + "completionItem/resolve"
+        val EDITING = FORMATTING + "codeAction/resolve" + "completionItem/resolve" + "textDocument/rename"
         const val MAX_LOCATIONS = 5000
     }
 
@@ -112,6 +114,8 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
         pool.execute {
             try {
                 if (DebugLevers.navigationDelayMs > 0) Thread.sleep(DebugLevers.navigationDelayMs)
+                // The buffer moved on while this waited its turn: the position asked about is stale.
+                if (mirror != null && mirror.version != versionAtStart) throw CodeActions.StaleAction()
                 if (method == "textDocument/signatureHelp") {
                     // Some parameter-info handlers read the caret, not the offset they are given.
                     val at = MirrorSet.offset(mirror!!.document, params["position"]!!.jsonObject)
@@ -121,6 +125,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                     // A write action on the EDT: never from inside a read action.
                     if (method == "codeAction/resolve") codeActions.resolve(mirror!!, params)
                     else if (method == "completionItem/resolve") insertion.resolve(mirror!!, params)
+                    else if (method == "textDocument/rename") renames.rename(mirror!!, params)
                     else formatting.edits(mirror!!, params["range"] as? JsonObject)
                 } else {
                     ReadAction.nonBlocking(Callable { compute(method, mirror, params) })
@@ -136,6 +141,8 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             } catch (_: ProcessCanceledException) {
                 if (job.cancelled.get()) job.cancel()
                 else job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "content modified"))
+            } catch (e: Rename.Refused) {
+                job.reply(Wire.error(id, RpcError.INVALID_PARAMS, e.message ?: "cannot rename"))
             } catch (_: CodeActions.StaleAction) {
                 job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "the buffer changed since the action was offered"))
             } catch (_: IndexNotReadyException) {
@@ -181,6 +188,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/documentHighlight" -> highlights(editor, file, offset)
             "textDocument/signatureHelp" -> signatures.signatureHelp(project, editor, file, offset)
             "textDocument/codeAction" -> codeActions.list(mirror, params)
+            "textDocument/prepareRename" -> renames.prepare(editor, file, offset)
             "textDocument/documentSymbol" -> structure.documentSymbols(editor, file)
             "textDocument/foldingRange" -> structure.foldingRanges(file, doc)
             "textDocument/selectionRange" -> structure.selectionRanges(

@@ -212,6 +212,7 @@ class BrainService(private val project: Project) : Disposable {
                 CodeActions.KINDS.map { kotlinx.serialization.json.JsonPrimitive(it) }))
             put("resolveProvider", true) // titles now, edits on resolve (FEATURES.md D3)
         })
+        put("renameProvider", buildJsonObject { put("prepareProvider", true) })
         put("documentFormattingProvider", true)
         put("documentRangeFormattingProvider", true)
         put("signatureHelpProvider", buildJsonObject {
