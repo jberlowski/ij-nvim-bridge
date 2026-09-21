@@ -80,6 +80,11 @@ class CompletionEngine(private val project: Project) : Disposable {
         }
     }
 
+    /** The Session went away: nothing queued for it should run, or be answered. */
+    fun cancelAllFor(transport: Transport) {
+        synchronized(this) { supersedeWhere { it.transport === transport } }
+    }
+
     /** `$/ij/completionCancel`: the same operation as being superseded. */
     fun cancel(streamId: String) {
         synchronized(this) { supersedeWhere { it.streamId == streamId } }

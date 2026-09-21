@@ -195,6 +195,42 @@ def wire(bridge):
 
 
 @pytest.fixture
+def project_files(bridge, bridge_container):
+    """Create files inside the fixture project for one test, and remove them after.
+
+    The IDE is asked to pick them up and the test waits until it has settled,
+    since a new file starts indexing.
+    """
+    from harness.util import wait_until
+    from harness.wire import Wire
+    made: list[str] = []
+
+    def settle():
+        with Wire(bridge.port) as w:
+            w.initialize()
+            w.request("$/ij/debug/refresh", {})
+            time.sleep(1.5)
+            seen = {"n": 0}
+
+            def ready():
+                seen["n"] = seen["n"] + 1 if w.debug_state()["state"] == "Ready" else 0
+                return seen["n"] >= 3
+            wait_until(ready, timeout=120, interval=0.7, message="the IDE never settled")
+
+    def add(path: str, data: bytes | str) -> str:
+        bridge_container.write_bytes(path, data.encode() if isinstance(data, str) else data)
+        made.append(path)
+        settle()
+        return path
+
+    yield add
+    if made:
+        for path in made:
+            bridge_container.exec(f"rm -f '{path}'", check=False)
+        settle()
+
+
+@pytest.fixture
 def probe(bridge):
     """A passive Session for looking at the Brain while Neovim drives it.
 

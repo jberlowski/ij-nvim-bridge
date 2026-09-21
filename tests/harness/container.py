@@ -105,6 +105,20 @@ class Container:
             f"cat > {shlex.quote(path)} <<'HARNESS_EOF'\n{content}\nHARNESS_EOF"
         )
 
+    def write_bytes(self, path: str, data: bytes) -> None:
+        """Write exactly these bytes. write_file cannot: its heredoc adds a final
+        newline and is no place for CRLF."""
+        import base64
+        self.exec(
+            f"mkdir -p {shlex.quote(str(Path(path).parent))} && "
+            f"echo {base64.b64encode(data).decode()} | base64 -d > {shlex.quote(path)}"
+        )
+
+    def read_bytes(self, path: str) -> bytes:
+        import base64
+        out = self.exec(f"base64 < {shlex.quote(path)}").stdout
+        return base64.b64decode(out)
+
     def copy_in(self, host_path: Path, guest_path: str) -> None:
         self.exec(f"mkdir -p {shlex.quote(guest_path)}", check=True)
         _run(["docker", "cp", f"{host_path}/.", f"{self.name}:{guest_path}"])

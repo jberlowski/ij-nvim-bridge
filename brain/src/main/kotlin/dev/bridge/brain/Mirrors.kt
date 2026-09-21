@@ -37,6 +37,13 @@ class Mirror(
 ) {
     /** Holds exactly the buffer's bytes at [version]: every change was applied. */
     @Volatile var convergent: Boolean = true
+
+    /**
+     * The Sessions that have this buffer open. A Mirror belongs to the project,
+     * but a Session's claim on it must not outlive the Session, and must not be
+     * ended by another Session's didClose.
+     */
+    val owners: MutableSet<Any> = ConcurrentHashMap.newKeySet()
 }
 
 /**
@@ -83,7 +90,17 @@ class MirrorSet(private val project: Project) : Disposable {
         edt { FileEditorManager.getInstance(project).openFile(m.file, false) }
     }
 
-    fun open(uri: String, version: Int, text: String) {
+    fun open(uri: String, version: Int, rawText: String, owner: Any) {
+        val text = normalise(rawText)
+        mirrors[uri]?.let { existing ->
+            // Already Mirrored by another Session (or this one, reattaching): take a
+            // claim on it and leave the text alone. The first editor's unsaved
+            // buffer is what the Mirror holds; a second editor connecting must not
+            // overwrite it, and nothing could put it back. Two editors editing
+            // one file at once is not supported.
+            existing.owners += owner
+            return
+        }
         val file = resolve(uri) ?: throw IllegalArgumentException("no file for $uri")
         val mirror = edt {
             val editor = openEditor(file)
@@ -99,9 +116,19 @@ class MirrorSet(private val project: Project) : Disposable {
             PsiDocumentManager.getInstance(project).commitDocument(doc)
             Mirror(uri, file, doc, editor, version)
         }
+        mirror.owners += owner
         MirroredFiles.add(file)
         mirrors[uri] = mirror
     }
+
+    /**
+     * Neovim sends a `fileformat=dos` buffer with `\r\n` line endings, and IntelliJ
+     * documents accept only `\n`: setText throws on anything else, and the Mirror is
+     * never made. Line endings are a property of the file on disk, which the Editor
+     * writes; the Mirror holds the logical text.
+     */
+    private fun normalise(text: String): String =
+        if (text.indexOf('\r') < 0) text else text.replace("\r\n", "\n").replace('\r', '\n')
 
     fun change(uri: String, version: Int, changes: JsonArray) {
         val m = mirrors[uri] ?: throw IllegalArgumentException("not mirrored: $uri")
@@ -129,12 +156,35 @@ class MirrorSet(private val project: Project) : Disposable {
         m.convergent = true
     }
 
-    fun close(uri: String) {
+    /** A Session closed its buffer. The Mirror goes only when no Session has it open. */
+    fun close(uri: String, owner: Any) {
+        val m = mirrors[uri] ?: return
+        m.owners -= owner
+        if (m.owners.isEmpty()) release(uri)
+    }
+
+    /**
+     * A Session went away (Neovim quit or crashed, or the socket dropped): take
+     * back its claims. Returns the URIs of Mirrors that were released, so their
+     * diagnostics can be cleared.
+     */
+    fun dropOwner(owner: Any): List<String> {
+        val released = ArrayList<String>()
+        for (m in mirrors.values.toList()) {
+            if (m.owners.remove(owner) && m.owners.isEmpty()) {
+                release(m.uri)
+                released += m.uri
+            }
+        }
+        return released
+    }
+
+    private fun release(uri: String) {
         val m = mirrors.remove(uri) ?: return
         closingByUs += m.file
         try {
             edt {
-                // A closed Mirror must not leave its text behind as an unsaved
+                // A released Mirror must not leave its text behind as an unsaved
                 // document: once the veto lifts, IntelliJ would autosave a buffer
                 // the developer may have discarded (:bd!) onto their file.
                 MirroredFiles.allowingReload {
@@ -175,7 +225,7 @@ class MirrorSet(private val project: Project) : Disposable {
         LocalFileSystem.getInstance().refreshAndFindFileByPath(Path.of(URI(uri)).toString())
 
     private fun apply(doc: Document, change: JsonObject) {
-        val text = change["text"]?.jsonPrimitive?.contentOrNull ?: ""
+        val text = normalise(change["text"]?.jsonPrimitive?.contentOrNull ?: "")
         val range = change["range"]?.jsonObject
         if (range == null) {
             doc.setText(text)

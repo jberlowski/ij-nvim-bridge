@@ -43,6 +43,9 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             }
         } finally {
             brain.unregister(transport)
+            // The editor is gone, cleanly or not: its claims go with it.
+            brain.mirrors.dropOwner(this).forEach { brain.diagnostics.clear(it) }
+            brain.completion.cancelAllFor(transport)
         }
     }
 
@@ -64,7 +67,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
 
                 "textDocument/didOpen" -> {
                     val doc = params.obj("textDocument")
-                    brain.mirrors.open(doc.str("uri"), doc.int("version"), doc.str("text"))
+                    brain.mirrors.open(doc.str("uri"), doc.int("version"), doc.str("text"), this)
                 }
                 "textDocument/didChange" -> {
                     val doc = params.obj("textDocument")
@@ -85,8 +88,8 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 }
                 "textDocument/didClose" -> {
                     val uri = params.obj("textDocument").str("uri")
-                    brain.mirrors.close(uri)
-                    brain.diagnostics.clear(uri)
+                    brain.mirrors.close(uri, this)
+                    if (brain.mirrors.get(uri) == null) brain.diagnostics.clear(uri)
                 }
                 in NavigationEngine.METHODS -> brain.navigation.submit(method, id, params, transport)
                 "\$/cancelRequest" -> brain.navigation.cancel(params["id"])
