@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge - Feature specification
 
-Status: **decisions D1-D4 taken; the navigation core (build order 2) is built.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
+Status: **decisions D1-D4 taken; the navigation core (2) and symbols (3) are built.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
 
 ## 1. The principle: it looks like ordinary LSP
 
@@ -158,7 +158,12 @@ All four were taken by the maintainer; each records what was chosen and why it h
    - Definition uses `GotoDeclarationAction.findAllTargetElements`, type definition `GotoTypeDeclarationAction.findSymbolTypes`, implementation `DefinitionsScopedSearch`, references and highlights `ReferencesSearch` (project or file scope, read/write from `ReadWriteAccessDetector`).
    - **Hover needs two APIs.** Kotlin (K2) documents symbols only through the newer documentation-target API, whose `computeDocumentation()` throws for Java targets outside a coroutine context; Java answers to the older `DocumentationProvider`. The signature and the documentation fall back independently. IntelliJ's HTML is converted to Markdown by a small converter that is deliberately not a general one.
    - Not built: declaration (`gD`, same as definition from a usage), and results are capped at 5000 locations.
-3. **Symbols:** document symbols, workspace symbols, then folding, selection, signature help.
+3. **Symbols: built.** Document symbols, workspace symbols, folding ranges, selection ranges and signature help, each asserted on the wire and through Neovim's built-ins (`document_symbol`, `workspace_symbol`, LSP `foldexpr`, `selection_range`, `signature_help`). For whoever extends it:
+   - **Document symbols** come from the file's structure view, hierarchical, with the name's range as `selectionRange`. The kind is inferred from the PSI class *names* (`KtClass`, `PsiMethodImpl`, ...) because Java's and Kotlin's PSI classes are not both on the plugin's classpath; a top-level function is a Function and a member a Method.
+   - **Workspace symbols** are IntelliJ's Go to Class and Go to Symbol contributors, matched camel-hump style and ranked exact, then prefix, then the rest, capped at 100. What IntelliJ lists is the answer (it does not necessarily offer every overriding method), and it needs no open buffer.
+   - **Folding** uses IntelliJ's folding builders; a lone closing bracket stays visible, as other servers do. Kinds are `comment`, `imports`, `region`.
+   - **Selection ranges** merge IntelliJ's word-selection handlers with the PSI ancestor chain: the handlers alone gave only "the word" then "nearly the whole file" and skipped every expression in between.
+   - **Signature help** plays the part of IntelliJ's parameter-info popup: the handlers draw through a UI context, and the Brain records the label, each parameter and the current one. Newer handlers hand over a parameter list, Kotlin's draws a bare one that is normalised to `name(...)`; overloads are all returned and the one with enough parameters for the one being typed is active. The Mirror's caret is moved first, since some handlers read the caret rather than the offset.
 4. **Edits:** formatting and organize imports first (the project's motivation, and smallest: one copy, one diff), then completion insertion, then code actions (D3), then rename (D2).
 5. **On-save and generation:** format-on-save, generate code, extract/inline/move.
 6. **Hierarchies, inlay hints, code lens, workspace diagnostics.**

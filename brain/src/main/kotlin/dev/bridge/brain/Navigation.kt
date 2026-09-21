@@ -66,11 +66,15 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "bridge-navigation").apply { isDaemon = true } }
     private val inflight = ConcurrentHashMap<String, Job>()
     private val locations = Locations(project)
+    private val structure = StructureFeatures(project, locations)
+    private val signatures = SignatureHelp()
 
     companion object {
         val METHODS = setOf(
             "textDocument/definition", "textDocument/typeDefinition", "textDocument/implementation",
             "textDocument/references", "textDocument/hover", "textDocument/documentHighlight",
+            "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/selectionRange",
+            "workspace/symbol", "textDocument/signatureHelp",
         )
         const val MAX_LOCATIONS = 5000
     }
@@ -78,7 +82,8 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     fun submit(method: String, id: JsonElement?, params: JsonObject, transport: Transport) {
         val uri = params["textDocument"]?.jsonObject?.get("uri")?.jsonPrimitive?.contentOrNull
         val mirror = uri?.let { brain.mirrors.get(it) }
-        if (mirror == null) {
+        // workspace/symbol asks about the project, not about a buffer.
+        if (mirror == null && method != "workspace/symbol") {
             transport.send(Wire.error(id, RpcError.INVALID_PARAMS, "not mirrored: $uri"))
             return
         }
@@ -91,16 +96,21 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
         val job = Job(id, transport)
         val key = id.toString()
         inflight[key] = job
-        val versionAtStart = mirror.version
+        val versionAtStart = mirror?.version
         pool.execute {
             try {
                 if (DebugLevers.navigationDelayMs > 0) Thread.sleep(DebugLevers.navigationDelayMs)
+                if (method == "textDocument/signatureHelp") {
+                    // Some parameter-info handlers read the caret, not the offset they are given.
+                    val at = MirrorSet.offset(mirror!!.document, params["position"]!!.jsonObject)
+                    edt { mirror.editor.caretModel.moveToOffset(at) }
+                }
                 val result = ReadAction.nonBlocking(Callable { compute(method, mirror, params) })
                     .wrapProgress(job.indicator)
                     .executeSynchronously()
                 when {
                     job.cancelled.get() -> job.cancel()
-                    mirror.version != versionAtStart ->
+                    mirror != null && mirror.version != versionAtStart ->
                         job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "the buffer changed while answering"))
                     else -> job.reply(Wire.response(id, result))
                 }
@@ -124,9 +134,14 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     }
 
     // ---------------------------------------------------------------- features
-    private fun compute(method: String, mirror: Mirror, params: JsonObject): JsonElement {
+    private fun compute(method: String, mirror: Mirror?, params: JsonObject): JsonElement {
+        if (method == "workspace/symbol") {
+            return structure.workspaceSymbols(params["query"]?.jsonPrimitive?.contentOrNull ?: "")
+        }
+        mirror!!
         val doc = mirror.document
-        val offset = MirrorSet.offset(doc, params["position"]!!.jsonObject)
+        // selectionRange carries a list of positions instead of one.
+        val offset = params["position"]?.jsonObject?.let { MirrorSet.offset(doc, it) } ?: 0
         val editor = mirror.editor
         val file = PsiDocumentManager.getInstance(project).getPsiFile(doc)
             ?: return JsonNull
@@ -143,6 +158,11 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/references" -> references(editor, offset, params)
             "textDocument/hover" -> hover(editor, file, offset)
             "textDocument/documentHighlight" -> highlights(editor, file, offset)
+            "textDocument/signatureHelp" -> signatures.signatureHelp(project, editor, file, offset)
+            "textDocument/documentSymbol" -> structure.documentSymbols(editor, file)
+            "textDocument/foldingRange" -> structure.foldingRanges(file, doc)
+            "textDocument/selectionRange" -> structure.selectionRanges(
+                editor, file, (params["positions"] as? JsonArray)?.map { it.jsonObject } ?: emptyList())
             else -> throw IllegalArgumentException("not a navigation method: $method")
         }
     }

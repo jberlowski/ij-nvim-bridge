@@ -62,7 +62,9 @@ class TestCapabilities:
         with Wire(bridge.port) as w:
             caps = w.initialize()["capabilities"]
         for name in ("definitionProvider", "typeDefinitionProvider", "implementationProvider",
-                     "referencesProvider", "hoverProvider", "documentHighlightProvider"):
+                     "referencesProvider", "hoverProvider", "documentHighlightProvider",
+                     "documentSymbolProvider", "workspaceSymbolProvider", "foldingRangeProvider",
+                     "selectionRangeProvider"):
             assert caps[name] is True, name
 
 
