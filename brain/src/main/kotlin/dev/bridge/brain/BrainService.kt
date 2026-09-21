@@ -207,6 +207,8 @@ class BrainService(private val project: Project) : Disposable {
         put("workspaceSymbolProvider", true)
         put("foldingRangeProvider", true)
         put("selectionRangeProvider", true)
+        put("documentFormattingProvider", true)
+        put("documentRangeFormattingProvider", true)
         put("signatureHelpProvider", buildJsonObject {
             put("triggerCharacters", kotlinx.serialization.json.JsonArray(listOf("(", ",").map { kotlinx.serialization.json.JsonPrimitive(it) }))
             put("retriggerCharacters", kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive(","))))

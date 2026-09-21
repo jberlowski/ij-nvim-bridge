@@ -68,6 +68,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val locations = Locations(project)
     private val structure = StructureFeatures(project, locations)
     private val signatures = SignatureHelp()
+    private val formatting = Formatting(project)
 
     companion object {
         val METHODS = setOf(
@@ -75,7 +76,10 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/references", "textDocument/hover", "textDocument/documentHighlight",
             "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/selectionRange",
             "workspace/symbol", "textDocument/signatureHelp",
+            "textDocument/formatting", "textDocument/rangeFormatting",
         )
+        /** Edits: computed on a copy, needing a write action, so not read-only. */
+        val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
         const val MAX_LOCATIONS = 5000
     }
 
@@ -88,7 +92,8 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             return
         }
         val status = brain.status()
-        if (status.state != "Ready") {
+        // Formatting works on syntax, not indices, so it is allowed while Indexing.
+        if (status.state != "Ready" && method !in FORMATTING) {
             transport.send(Wire.error(id, RpcError.CONTENT_MODIFIED,
                 "IntelliJ is not ready (${status.reason}); ask again when it is"))
             return
@@ -105,9 +110,14 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                     val at = MirrorSet.offset(mirror!!.document, params["position"]!!.jsonObject)
                     edt { mirror.editor.caretModel.moveToOffset(at) }
                 }
-                val result = ReadAction.nonBlocking(Callable { compute(method, mirror, params) })
-                    .wrapProgress(job.indicator)
-                    .executeSynchronously()
+                val result = if (method in FORMATTING) {
+                    // A write action on the EDT: never from inside a read action.
+                    formatting.edits(mirror!!, params["range"] as? JsonObject)
+                } else {
+                    ReadAction.nonBlocking(Callable { compute(method, mirror, params) })
+                        .wrapProgress(job.indicator)
+                        .executeSynchronously()
+                }
                 when {
                     job.cancelled.get() -> job.cancel()
                     mirror != null && mirror.version != versionAtStart ->

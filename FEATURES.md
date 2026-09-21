@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge - Feature specification
 
-Status: **decisions D1-D4 taken; the navigation core (2) and symbols (3) are built.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
+Status: **decisions D1-D4 taken; the navigation core (2), symbols (3) and formatting are built.** [SPEC.md](./SPEC.md) defines the architecture and the v1 spine (Sessions, Mirrors, completion, diagnostics). This document lists everything else that makes the Bridge a *full* language-server experience, in the order it should be built. Vocabulary is [CONTEXT.md](./CONTEXT.md); capitalised terms are glossary terms.
 
 ## 1. The principle: it looks like ordinary LSP
 
@@ -105,6 +105,7 @@ LSP has no vocabulary for these; they are `workspace/executeCommand` commands an
 
 Not planned, not designed, no priority. Written down so the idea is not lost.
 
+- **Running IntelliJ tasks and Gradle tasks.** List and run the project's Gradle tasks and IntelliJ run configurations from Neovim (build, test, run the application), streaming the output back through standard progress and log notifications and surfacing failures as diagnostics. Sits in Tier 4 (§6, `$/ij/gradleTask`, `$/ij/build`, run configurations) as designed-but-unscheduled; wished for ahead of debugging, since it is the more everyday need.
 - **Debugging through DAP.** Drive IntelliJ's debugger from Neovim via the Debug Adapter Protocol (`nvim-dap`): breakpoints, stepping, variables, stack, evaluate. A different protocol and a different adapter, so it is a project of its own rather than a feature of this one; noted as out of scope in §6 and kept here as a wish.
 
 ## 7. Editing-lifecycle features
@@ -164,7 +165,9 @@ All four were taken by the maintainer; each records what was chosen and why it h
    - **Folding** uses IntelliJ's folding builders; a lone closing bracket stays visible, as other servers do. Kinds are `comment`, `imports`, `region`.
    - **Selection ranges** merge IntelliJ's word-selection handlers with the PSI ancestor chain: the handlers alone gave only "the word" then "nearly the whole file" and skipped every expression in between.
    - **Signature help** plays the part of IntelliJ's parameter-info popup: the handlers draw through a UI context, and the Brain records the label, each parameter and the current one. Newer handlers hand over a parameter list, Kotlin's draws a bare one that is normalised to `name(...)`; overloads are all returned and the one with enough parameters for the one being typed is active. The Mirror's caret is moved first, since some handlers read the caret rather than the offset.
-4. **Edits:** formatting and organize imports first (the project's motivation, and smallest: one copy, one diff), then completion insertion, then code actions (D3), then rename (D2).
+4. **Edits: formatting built.** `textDocument/formatting` and `rangeFormatting`, each asserted on the wire and through `vim.lsp.buf.format`. The Brain copies the Mirror's PSI file, reformats the copy in a write action on the EDT, and diffs it against the original into minimal line-based edits (`ComparisonManager`); the Mirror and disk are never touched. It cannot share the navigation engine's read-action path, since waiting for the EDT from inside a read action can deadlock; it works on syntax, so it is allowed while Indexing. Two things worth knowing: (1) **the style must be resolved from the original file**, not the copy: a copy is not on disk and silently lost the project's `.editorconfig`, formatting with 4 spaces where the project asked for 2, so the original's settings are passed in explicitly; (2) the client's `FormattingOptions` (`tabSize`, `insertSpaces`) are deliberately ignored, since Neovim's settings are not the IDE's and the IDE's are the point. Organize imports is next, then completion insertion.
+
+   Original plan for this step, kept for the remaining items: formatting and organize imports first (the project's motivation, and smallest: one copy, one diff), then completion insertion, then code actions (D3), then rename (D2).
 5. **On-save and generation:** format-on-save, generate code, extract/inline/move.
 6. **Hierarchies, inlay hints, code lens, workspace diagnostics.**
 7. **Project extensions:** run configurations, build, search.
