@@ -39,9 +39,10 @@ class CodeActions(private val project: Project) {
 
     companion object {
         const val ORGANIZE_IMPORTS = "source.organizeImports"
+        const val GENERATE = "source.generate"
         const val QUICK_FIX = "quickfix"
         const val REWRITE = "refactor.rewrite"
-        val KINDS = listOf(ORGANIZE_IMPORTS, QUICK_FIX, REWRITE)
+        val KINDS = listOf(ORGANIZE_IMPORTS, GENERATE, QUICK_FIX, REWRITE)
     }
 
     // ------------------------------------------------------------------ listing
@@ -65,6 +66,7 @@ class CodeActions(private val project: Project) {
                 })
             }
         }
+        actions += generateAt(mirror, file, params, only)
         actions += intentionsAt(mirror, params, only)
         return JsonArray(actions)
     }
@@ -101,6 +103,26 @@ class CodeActions(private val project: Project) {
             }
         }
         return out.values.toList()
+    }
+
+    /** What the Generate menu would offer for the class at the range: constructors, accessors, `toString`, ... */
+    private fun generateAt(mirror: Mirror, file: PsiFile, params: JsonObject, only: List<String>?): List<JsonObject> {
+        val range = params["range"]?.jsonObject ?: return emptyList()
+        val generator = Generator.forFile(file) ?: return emptyList()
+        val offset = MirrorSet.offset(mirror.document, range["start"]!!.jsonObject)
+        return generator.offers(file, offset).filter { wanted(it.kind, only) }.map { offer ->
+            buildJsonObject {
+                put("title", offer.title)
+                put("kind", offer.kind)
+                put("data", buildJsonObject {
+                    put("uri", mirror.uri)
+                    put("version", mirror.version)
+                    put("kind", offer.kind)
+                    put("key", offer.key)
+                    put("range", range)
+                })
+            }
+        }
     }
 
     private fun intentionsAt(mirror: Mirror, params: JsonObject, only: List<String>?): List<JsonObject> {
@@ -141,6 +163,7 @@ class CodeActions(private val project: Project) {
         }
         val kind = data["kind"]?.jsonPrimitive?.contentOrNull
         if (kind == QUICK_FIX || kind == REWRITE) return resolveIntention(mirror, action, data, version)
+        if (kind != null && kind.startsWith(GENERATE)) return resolveGenerate(mirror, action, data, version)
         val edits = when (kind) {
             ORGANIZE_IMPORTS -> organizeImports(mirror)
             else -> throw IllegalArgumentException("unknown action kind")
@@ -151,6 +174,40 @@ class CodeActions(private val project: Project) {
             put("kind", action["kind"] ?: JsonPrimitive(ORGANIZE_IMPORTS))
             put("edit", buildJsonObject {
                 put("changes", buildJsonObject { put(mirror.uri, JsonArray(edits)) })
+            })
+        }
+    }
+
+    /**
+     * Generated on a copy of the file, in a write action on the EDT, then diffed: the Mirror and the disk
+     * are never touched (D2). The style is the original file's, as for formatting.
+     */
+    private fun resolveGenerate(mirror: Mirror, action: JsonObject, data: JsonObject, version: Int?): JsonElement {
+        val key = data["key"]?.jsonPrimitive?.contentOrNull ?: throw IllegalArgumentException("no key on the action")
+        val range = data["range"]?.jsonObject ?: throw IllegalArgumentException("no range on the action")
+        val doc = mirror.document
+        val (original, file, offset) = ReadAction.compute<Triple<String, PsiFile?, Int>, RuntimeException> {
+            Triple(doc.text, PsiDocumentManager.getInstance(project).getPsiFile(doc), MirrorSet.offset(doc, range["start"]!!.jsonObject))
+        }
+        if (file == null) throw StaleAction()
+        val generator = Generator.forFile(file) ?: throw StaleAction()
+        val settings = ReadAction.compute<com.intellij.psi.codeStyle.CodeStyleSettings, RuntimeException> { CodeStyle.getSettings(file) }
+        val generated = edt {
+            var result = original
+            val run = {
+                val copy = file.copy() as PsiFile
+                CodeStyle.runWithLocalSettings(project, settings, Runnable { generator.generate(copy, offset, key) })
+                result = copy.text
+            }
+            if (generator.needsWriteAction(key)) WriteCommandAction.runWriteCommandAction(project) { run() } else run()
+            result
+        }
+        if (mirror.version != version && version != null) throw StaleAction()
+        return buildJsonObject {
+            put("title", action["title"] ?: JsonPrimitive("Generate"))
+            put("kind", action["kind"] ?: JsonPrimitive(GENERATE))
+            put("edit", buildJsonObject {
+                put("changes", buildJsonObject { put(mirror.uri, JsonArray(TextEdits.diff(original, generated))) })
             })
         }
     }

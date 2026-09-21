@@ -15,6 +15,10 @@ dependencies {
     intellijPlatform {
         // Compile against the exact IDE in the harness image (HARNESS.md §9).
         local(providers.gradleProperty("localIdePath").orElse("/opt/idea"))
+        // Typed access to Java's and Kotlin's PSI, for generating code. Both are *optional* at run
+        // time (plugin.xml): the Brain still loads, without those features, in an IDE that has neither.
+        bundledPlugin("com.intellij.java")
+        bundledPlugin("org.jetbrains.kotlin")
     }
     // The IDE carries its own kotlinx.serialization, but as a library module with
     // internal visibility: a third-party plugin that depends on it is refused at

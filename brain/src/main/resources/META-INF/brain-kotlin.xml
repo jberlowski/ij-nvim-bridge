@@ -1,0 +1,5 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="dev.bridge.brain">
+        <generator implementation="dev.bridge.brain.KotlinGenerator"/>
+    </extensions>
+</idea-plugin>

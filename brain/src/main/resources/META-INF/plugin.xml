@@ -9,6 +9,13 @@
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
+    <!-- Generating code needs the languages' own PSI; each language's part is loaded only when it is there. -->
+    <depends optional="true" config-file="brain-java.xml">com.intellij.java</depends>
+    <depends optional="true" config-file="brain-kotlin.xml">org.jetbrains.kotlin</depends>
+
+    <extensionPoints>
+        <extensionPoint name="generator" interface="dev.bridge.brain.Generator" dynamic="true"/>
+    </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
         <postStartupActivity implementation="dev.bridge.brain.BrainStartup"/>
