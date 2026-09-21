@@ -489,7 +489,8 @@ function M.report()
   return out
 end
 
-function M.setup(_)
+--- @param opts? { prefix?: string, keys?: boolean } keys are bound under `prefix` (default `<leader>i`) unless `keys = false`
+function M.setup(opts)
   local group = vim.api.nvim_create_augroup('IjBridge', { clear = true })
 
   vim.api.nvim_create_autocmd('BufEnter', {
@@ -556,16 +557,20 @@ function M.setup(_)
       M.report()
     elseif sub == 'new' then
       M.new_file_interactive(rest)
+    elseif sub == 'keys' then
+      print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir])')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], keys)')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'log', 'brainlog', 'loglevel', 'report', 'new' }
+      return { 'status', 'log', 'brainlog', 'loglevel', 'report', 'new', 'keys' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })
+
+  require('ij_bridge.keys').setup(opts)
 
   M.attach(vim.api.nvim_get_current_buf())
 end
