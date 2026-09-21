@@ -97,7 +97,7 @@ class CompletionEngine(private val project: Project) : Disposable {
                 replyCancelled(queued) // never reached IntelliJ
             }
         }
-        inflight?.takeIf(match)?.superseded = true // finishes; results discarded
+        inflight?.takeIf(match)?.superseded = true // finishes; a complete answer is still delivered, flagged
     }
 
     private fun loop() {
@@ -139,7 +139,6 @@ class CompletionEngine(private val project: Project) : Disposable {
         // in-progress lookup, if there is one, gives early batches.
         val finished = AtomicReference<List<LookupElement>?>(null)
 
-        if (DebugLevers.completionDelayMs > 0) Thread.sleep(DebugLevers.completionDelayMs)
         val tInvoke = System.nanoTime()
         val deadline = tInvoke + r.lateWaitMs * 1_000_000L
         var first: Snap? = null
@@ -169,7 +168,25 @@ class CompletionEngine(private val project: Project) : Disposable {
                 if (idleMs >= RETRY_AFTER_MS) break
             }
         }
-        if (r.superseded) { finishSuperseded(r); return }
+        // Harness only: make IntelliJ *finish* slowly. After the invocation, not before
+        // it: a request replaced while IntelliJ is already working on it is the case
+        // that matters, and one replaced before it starts never runs at all.
+        if (DebugLevers.completionDelayMs > 0) Thread.sleep(DebugLevers.completionDelayMs)
+        if (r.superseded) {
+            // A newer keystroke replaced this request, but IntelliJ has already done the
+            // work, and the answer is exactly right for the text it was asked about. If it
+            // finished in one batch, deliver it flagged `superseded`: the Editor caches it
+            // (so backspacing returns to it) and can show it as an interim result for the
+            // newer request. An unfinished stream is still dropped.
+            val finished = first
+            if (finished != null && !finished.calculating) {
+                respond(r, finished.fresh, done = true, incomplete = false, tInvoke = tInvoke,
+                    snap = finished, superseded = true)
+            } else {
+                finishSuperseded(r)
+            }
+            return
+        }
 
         if (first == null) { // IntelliJ produced nothing in time
             val diag = edt {
@@ -223,7 +240,7 @@ class CompletionEngine(private val project: Project) : Disposable {
     }
 
     private fun respond(r: Request, items: List<JsonObject>, done: Boolean, incomplete: Boolean,
-                        tInvoke: Long, snap: Snap?, diag: JsonObject? = null) {
+                        tInvoke: Long, snap: Snap?, diag: JsonObject? = null, superseded: Boolean = false) {
         val tSend = System.nanoTime()
         r.responded = true
         r.transport.send(Wire.response(r.id, buildJsonObject {
@@ -231,6 +248,7 @@ class CompletionEngine(private val project: Project) : Disposable {
             put("items", JsonArray(items))
             put("done", done)
             put("isIncomplete", incomplete)
+            if (superseded) put("superseded", true)
             if (diag != null) put("diag", diag)
             put("timings", buildJsonObject {
                 // Queue time behind a superseded request is Overhead, not

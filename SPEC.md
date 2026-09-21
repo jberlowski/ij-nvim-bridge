@@ -213,14 +213,15 @@ Completion must not run inside a write action; it is scheduled via `invokeLater`
 
 ### 6.4 Supersession
 
-`invokeCompletion` blocks the EDT for ~90% of the time to first items, so requests serialise and the synchronous part cannot be cancelled. A newer request for a buffer therefore *supersedes* an older one: at most one request in flight and one pending, newest wins. One dropped before it starts never reaches IntelliJ; one already running finishes, has its results discarded, and has its lookup hidden. `$/ij/completionCancel` is the same operation. Queue time behind a superseded request counts as Overhead.
+`invokeCompletion` blocks the EDT for ~90% of the time to first items, so requests serialise and the synchronous part cannot be cancelled. A newer request for a buffer therefore *supersedes* an older one: at most one request in flight and one pending, newest wins. One dropped before it starts never reaches IntelliJ and is answered `RequestCancelled`. One already running is not interrupted, and its work is not wasted: if it finished in one batch, the response is delivered **flagged `superseded`**, since it is exactly right for the text it was asked about (§6.5 uses it). An unfinished stream is dropped. `$/ij/completionCancel` is the same operation. Queue time behind a superseded request counts as Overhead.
 
 ### 6.5 Incremental completion and the answer cache
 
 Typing another character sends another request, and the menu never blanks while it is in flight.
 
 - **Results are always marked incomplete**, forward and backward. blink.cmp then asks the source again on every keystroke instead of filtering the last answer with its own fuzzy matcher, so IntelliJ's matching stays authoritative (Passthrough). For an async source blink keeps showing the previous list, filtered, until the new answer arrives, so nothing flashes empty.
-- **Backspace needed more than that.** Without the cache, reusing the last answer after a backspace shows *fewer* candidates than IntelliJ would give, since it was filtered for the longer prefix. The Editor keeps a small cache (8 entries, 30 s) of finished, complete answers. The key is a hash of the buffer's text, the cursor position, and the change ticks of every other Mirrored buffer, so returning to an earlier text state is a hit and an edit anywhere IntelliJ could see changes the key. A hit skips the Brain entirely and is still marked incomplete. Degraded and capped answers are never cached; the cache is cleared when the Brain's state changes; buffers over 1 MB are not cached at all.
+- **Backspace needed more than that.** Without the cache, reusing the last answer after a backspace shows *fewer* candidates than IntelliJ would give, since it was filtered for the longer prefix. The Editor keeps a small cache (8 entries, **5 s**) of finished, complete answers. The key is a hash of the buffer's text, the cursor position, and the change ticks of every other Mirrored buffer, so returning to an earlier text state is a hit and an edit anywhere IntelliJ could see changes the key. A hit skips the Brain entirely and is still marked incomplete. Degraded and capped answers are never cached; the cache is cleared when the Brain's state changes; buffers over 1 MB are not cached at all.
+- **A late answer is not thrown away.** If `abc.xy` is still being worked on when `z` is typed, blink.cmp drops that request and asks for `abc.xyz`. The `abc.xy` answer still arrives (flagged `superseded`, §6.4), and the Editor does two things with it: it is **cached** under the text it was asked about, so backspacing to `abc.xy` is a hit; and, if the newer request is still awaiting its answer and only keyword characters were added since (`extends`), it is **shown to that request as an interim result**, which blink.cmp filters against what is now typed. When the newer answer follows, items already shown are not shown twice. Without this, a fast typist got neither: the older answer was discarded on the client and on the Brain.
 - The Brain counts completion requests (`$/ij/debug/state`) and has a harness lever that slows completion down, so the tests can assert that another request went out and what the menu showed meanwhile.
 
 ## 7. Speed contract
@@ -284,6 +285,8 @@ $/ij/debug/state  req  → { project, capabilities, state, evictions, lookupActi
                            mirrors: [{ uri, version, convergent, open, length }] }
 $/ij/debug/setTabLimit · saveAll   harness-only levers (provoke the tab limit; do what an idle IDE does)
 ```
+
+**Debounce (requirement, not yet built).** Caret events must be debounced on the Editor side: continuous movement (holding `j`, or `w` across a line) must produce **one** event to the final position after the movement settles, not one per keystroke. A trailing debounce of ~100 ms, sent only if the position actually changed. The same applies to any future per-cursor traffic.
 
 Caret sync is *exposed* but not *acted on*: the Editor does not move its cursor in response. Bidirectional caret following is deferred — it is nearly free given real editors, but it is a distraction from the dealbreakers.
 

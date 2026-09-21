@@ -33,12 +33,12 @@ local streams = {}
 --- else changes the key, so a stale answer is never served. Short-lived and
 --- small on purpose: a wrong answer is worse than waiting.
 local CACHE_MAX = 8
-local CACHE_TTL_NS = 30 * 1e9
+local CACHE_TTL_NS = 5 * 1e9
 local CACHE_MAX_BYTES = 1024 * 1024
 local cache = { order = {}, map = {} }
 
 --- Counters for the harness and for :IjBridge diagnostics.
-M.stats = { requests = 0, hits = 0 }
+M.stats = { requests = 0, hits = 0, interim = 0, late = 0 }
 
 function M.clear_cache()
   cache = { order = {}, map = {} }
@@ -100,6 +100,59 @@ function M.active()
   return n
 end
 
+--- The latest request per buffer, so a late answer for an older one can be handed
+--- to it. State: { bufnr, row, col, line, callback, cancelled, answered, emitted }.
+local newest = {}
+
+--- Does `new` type on from `old`, within one word? Only then is the older answer
+--- a fair stand-in for the newer one while it is awaited: same buffer, same line,
+--- the same text up to the old cursor, and only keyword characters added since.
+local function extends(old, new)
+  if old.bufnr ~= new.bufnr or old.row ~= new.row or new.col < old.col then
+    return false
+  end
+  if new.line:sub(1, old.col) ~= old.line:sub(1, old.col) then
+    return false
+  end
+  return new.line:sub(old.col + 1, new.col):match('^[%w_]*$') ~= nil
+end
+
+local function item_key(item)
+  return (item.label or '') .. '\0' .. tostring(item.insertText)
+end
+
+--- An answer arrived for a request the developer has since typed past (`abc.xy`
+--- when they are now at `abc.xyz`). It is still right for the text it was asked
+--- about, so: it has already been cached by the caller, and here it is shown for
+--- the newer request, if that is still waiting, as an interim. blink.cmp filters
+--- it against what is now typed; the newer request's own answer follows and
+--- replaces what matters (only the items not already shown are appended).
+local function interim(old, items)
+  local n = newest[old.bufnr]
+  if not n or n == old or n.cancelled or n.answered or not extends(old, n) then
+    return
+  end
+  for _, item in ipairs(items) do
+    n.emitted[item_key(item)] = true
+  end
+  M.stats.interim = M.stats.interim + 1
+  n.callback({ items = vim.deepcopy(items), is_incomplete_forward = true, is_incomplete_backward = true })
+end
+
+--- `items` without those an interim already put on screen.
+local function not_yet_shown(state, items)
+  if next(state.emitted) == nil then
+    return items
+  end
+  local out = {}
+  for _, item in ipairs(items) do
+    if not state.emitted[item_key(item)] then
+      out[#out + 1] = item
+    end
+  end
+  return out
+end
+
 local function convert(items)
   local out = {}
   for i, item in ipairs(items) do
@@ -158,7 +211,11 @@ function Source:get_completions(ctx, callback)
 
   -- LSP counts UTF-16 code units; blink and nvim count bytes.
   local character = vim.str_utfindex(ctx.line, 'utf-16', col, false)
-  local state = { cancelled = false, callback = callback, key = key, all = {} }
+  local state = {
+    cancelled = false, callback = callback, key = key, all = {}, answered = false, emitted = {},
+    bufnr = ctx.bufnr, row = row, col = col, line = ctx.line,
+  }
+  newest[ctx.bufnr] = state
   local t0 = uv.hrtime()
 
   client:request('$/ij/completion', {
@@ -168,8 +225,18 @@ function Source:get_completions(ctx, callback)
   }, function(err, result)
     local t1 = uv.hrtime()
     if state.cancelled then
+      -- The developer typed past this request, and blink.cmp dropped it. The
+      -- answer is still right for the text it was asked about: keep it for a
+      -- backspace, and show it to the request that replaced it.
+      if result and not err and result.done and not result.isIncomplete and not result.degraded then
+        M.stats.late = M.stats.late + 1
+        local items = convert(result.items)
+        cache_put(state.key, vim.deepcopy(items))
+        interim(state, items)
+      end
       return
     end
+    state.answered = true
     if err or not result then
       -- Includes RequestCancelled: a newer request superseded this one.
       callback({ items = {}, is_incomplete_forward = true, is_incomplete_backward = true })
@@ -184,7 +251,7 @@ function Source:get_completions(ctx, callback)
       cache_put(state.key, vim.deepcopy(state.all)) -- a finished, complete answer
     end
     callback({
-      items = items,
+      items = not_yet_shown(state, items),
       -- Always incomplete: every keystroke asks IntelliJ again while blink keeps
       -- showing the previous list, filtered, so the menu never blanks.
       is_incomplete_forward = true,
@@ -228,13 +295,14 @@ function M.on_items(err, params)
   end
   local items = convert(params.items)
   vim.list_extend(state.all, items)
+  state.answered = true
   if params.done and not params.isIncomplete then
     cache_put(state.key, vim.deepcopy(state.all)) -- a Stream that finished before the Cap
   end
   -- Always answer the closing message, even with nothing to append: it is the
   -- only way blink.cmp learns the Stream is over.
   if #items > 0 or params.done then
-    state.callback({ items = items, is_incomplete_forward = true, is_incomplete_backward = true })
+    state.callback({ items = not_yet_shown(state, items), is_incomplete_forward = true, is_incomplete_backward = true })
   end
 end
 

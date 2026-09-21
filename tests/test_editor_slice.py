@@ -8,6 +8,7 @@ The Brain's side is observed through a passive second Session (`probe`).
 from __future__ import annotations
 
 import json
+import time
 import statistics
 
 import pytest
@@ -404,6 +405,81 @@ class TestIncrementalCompletion:
         probe_line(nvim, "compute")
         complete(nvim)
         assert probe.debug_state()["completionRequests"] == asked + 1, "served a stale answer"
+
+    def test_a_cached_answer_expires_after_five_seconds(self, nvim, probe, bridge_container):
+        large_surface(nvim, bridge_container)
+        probe_line(nvim, "comp")
+        complete(nvim)
+        asked = probe.debug_state()["completionRequests"]
+        complete(nvim)                                            # inside the window: a hit
+        assert probe.debug_state()["completionRequests"] == asked
+        time.sleep(5.5)
+        complete(nvim)                                            # past it: asks again
+        assert probe.debug_state()["completionRequests"] == asked + 1
+
+    def _typed_past_a_slow_request(self, nvim, probe, delay_ms=2000):
+        """The developer types `comp`, then `u` while IntelliJ is still working on
+        `comp`. Returns what the newer request's callback saw, and when."""
+        probe.request("$/ij/debug/completionDelay", {"ms": delay_ms})
+        try:
+            return nvim.exec_lua("""
+                local blink = require('ij_bridge.blink')
+                local source = blink.new()
+                local buf = vim.api.nvim_get_current_buf()
+                local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+                local row
+                for i, l in ipairs(lines) do if l:find('val probe = LargeSurface%(%)%.') then row = i end end
+                local function ctx(suffix)
+                  local line = '    val probe = LargeSurface().' .. suffix
+                  vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { line })
+                  return { bufnr = buf, cursor = { row, #line }, line = line }
+                end
+                local a = ctx('comp')
+                local cancel_a = source:get_completions(a, function() end)
+                vim.wait(80)
+                local b = ctx('compu')
+                cancel_a()                     -- what blink.cmp does when a new list replaces the old
+                local t0 = vim.uv.hrtime()
+                local calls, labels, dupes = {}, {}, 0
+                source:get_completions(b, function(r)
+                  table.insert(calls, { t = (vim.uv.hrtime() - t0) / 1e9, n = #r.items })
+                  for _, it in ipairs(r.items) do
+                    if labels[it.label] then dupes = dupes + 1 end
+                    labels[it.label] = true
+                  end
+                end)
+                vim.wait(20000, function() return #calls >= 2 end, 10)
+                return { calls = calls, dupes = dupes, stats = blink.stats }""")
+        finally:
+            probe.request("$/ij/debug/completionDelay", {"ms": 0})
+
+    def test_an_answer_that_arrives_late_is_shown_to_the_newer_request(
+            self, nvim, probe, bridge_container):
+        """The case: `abc.xy` is still being worked on when `z` is typed. Its
+        answer is right for `abc.xy`; it must not be thrown away. It is shown for
+        `abc.xyz` while that is awaited, and nothing is shown twice when the newer
+        answer follows."""
+        large_surface(nvim, bridge_container)
+        complete(nvim)                                            # warm IntelliJ up first
+        nvim.exec_lua("require('ij_bridge.blink').clear_cache()")
+        r = self._typed_past_a_slow_request(nvim, probe)
+        first, own = r["calls"][0], r["calls"][1]
+        assert first["n"] > 0, "no interim result was shown"
+        assert own["t"] - first["t"] > 1.0, (first, own, "the interim came no earlier than the real answer")
+        assert r["stats"]["interim"] >= 1
+        assert r["dupes"] == 0, "an item was shown twice"
+
+    def test_that_late_answer_is_cached_for_a_backspace(self, nvim, probe, bridge_container):
+        large_surface(nvim, bridge_container)
+        complete(nvim)
+        nvim.exec_lua("require('ij_bridge.blink').clear_cache()")
+        self._typed_past_a_slow_request(nvim, probe)
+        assert stats(nvim)["late"] >= 1
+        asked = probe.debug_state()["completionRequests"]
+        probe_line(nvim, "comp")                                  # backspace to what the late answer covers
+        back = complete(nvim, "computeMetricNumber000")
+        assert probe.debug_state()["completionRequests"] == asked, "the late answer was not cached"
+        assert back["found"]["computeMetricNumber000"]
 
     def test_one_more_character_asks_again_and_the_menu_keeps_its_items(
             self, nvim, probe, bridge_container):

@@ -287,8 +287,13 @@ class TestCompletion:
         time.sleep(0.02)                       # older is now running on the EDT
         newer = wire.send_request("$/ij/completion", params)
 
-        assert "error" in (a := wire.await_response(older)), a
-        assert a["error"]["code"] == -32800
+        a = wire.await_response(older)
+        if "error" in a:
+            assert a["error"]["code"] == -32800                   # replaced before it started
+        else:
+            # It was already being worked on: the answer is delivered, flagged, so the
+            # Editor can cache it and show it while the newer request is awaited.
+            assert a["result"]["superseded"] is True, a
         b = wire.await_response(newer)
         assert "result" in b and b["result"]["items"], b
         assert wire.debug_state()["state"] == "Ready"
