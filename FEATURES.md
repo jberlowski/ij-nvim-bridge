@@ -56,7 +56,7 @@ Without these the Bridge is not usable as a daily driver. Diagnostics and comple
 
 ## 4. Tier 2 - navigation and reading
 
-Standard LSP, cheap once the Tier 1 read-action plumbing exists.
+Standard LSP, cheap once the Tier 1 read-action plumbing exists. Semantic tokens are deliberately absent: see D4.
 
 | Feature | LSP method | Notes |
 |---|---|---|
@@ -66,7 +66,6 @@ Standard LSP, cheap once the Tier 1 read-action plumbing exists.
 | **Folding ranges** | `textDocument/foldingRange` | `FoldingBuilder`. IntelliJ knows Java/Kotlin folds (imports, comments, lambdas) that treesitter does not. |
 | **Selection range** | `textDocument/selectionRange` | Expand/shrink selection from the PSI tree (`ExtendWordSelectionHandler`). |
 | **Inlay hints** | `textDocument/inlayHint` (+ `inlayHint/resolve`) | Parameter names, inferred types, chained-call types. `InlayHintsProvider`; respects the IDE's own inlay settings (a **Borrowed Setting**). |
-| **Semantic tokens** | `textDocument/semanticTokens/full`, `/range`, `/full/delta` | Token types and modifiers from the daemon's semantic highlighting. Legend built from IntelliJ's text attributes keys. Optional; large payloads, needs a delta path. |
 | **Code lens** | `textDocument/codeLens` (+ `codeLens/resolve`) | "N usages", "Run test", "implemented by". Only lenses the IDE itself shows. |
 | **Document links** | `textDocument/documentLink` | URLs and file references in strings and comments. |
 | **Linked editing** | `textDocument/linkedEditingRange` | Deferred: no Java/Kotlin need. |
@@ -132,15 +131,17 @@ $/ij/runConfigurations  C→S  request      list run configurations (Tier 4)
 $/ij/search             C→S  request      IDE-scoped project search (Tier 4)
 ```
 
-## 10. Decisions needed before building
+## 10. Decisions
 
-**D1 - Locations that are not files.** How does a definition inside a jar or a decompiled class open in Neovim? Options: (a) `workspace/textDocumentContent` (LSP 3.18) with a `BufReadCmd` provider in the Neovim plugin; (b) the Brain extracts sources to a cache directory and returns `file://` URIs; (c) return nothing for library targets. (a) is cleanest and lets decompilation stay lazy; (b) is simplest and works with every client. **Recommendation: spike (b), design for (a).**
+All four were taken by the maintainer; each records what was chosen and why it holds.
 
-**D2 - Refactorings that mutate documents.** IntelliJ runs rename, extract and move by editing documents in place. To return `WorkspaceEdit`s the Brain can (a) prefer `ModCommand`-based actions, which are data already; (b) for processors that expose a usage list (rename, safe delete), build the edits from `UsageInfo` directly; (c) as a last resort, run the refactoring against a **scratch copy** of the affected documents, diff, and discard, which is fragile around multi-file and PSI-mutating steps. **Recommendation: (a) then (b); (c) only for extract-method-class refactorings, behind a feature flag, after a dedicated spike.**
+**D1 - Locations that are not files: extract to a cache directory.** A definition inside a jar or a decompiled class is delivered by having the Brain write the source (or IntelliJ's decompiled text) to a cache directory and return a `file://` URI. It works with every client and every Neovim picker and is the simplest to build. **Design constraint:** keep the extraction behind one function so it can be replaced by a virtual document (`workspace/textDocumentContent`, LSP 3.18, with a `BufReadCmd` provider in the Neovim plugin) later without touching any feature. Cached files must be read-only, must live in the developer's own cache directory (Unprivileged), must be named so the buffer identifies the library and version, and must be invalidated when the library changes.
 
-**D3 - Code-action latency.** Computing every quick fix's edit for every diagnostic on the line is too slow. Return actions with titles and kinds immediately and put the edit in `codeAction/resolve`; confirm Neovim's built-in menu resolves lazily on selection.
+**D2 - Refactorings that mutate documents: data first, scratch copy last.** The Brain returns `WorkspaceEdit`s and never applies them to a Mirror. Order of preference: (a) `ModCommand`-based actions, which are already edits-as-data; (b) for processors that expose a usage list (rename, safe delete), build the edits from `UsageInfo` directly; (c) only for extract-method-class refactorings, run against a **scratch copy** of the affected documents, diff and discard, behind a feature flag and after its own spike. Nothing in (c) ships without that spike.
 
-**D4 - Semantic tokens payload.** Decide whether to build them at all, given treesitter, and if so whether to send deltas. **Recommendation: defer until Tier 1 and 2 are done; measure first.**
+**D3 - Code-action latency: titles now, edits on resolve.** `textDocument/codeAction` returns titles and kinds immediately; the edit is computed in `codeAction/resolve` when the developer selects one. **Verify first** that Neovim's built-in code-action menu resolves lazily on selection; if it does not, the fallback is computing edits up front for the current line only.
+
+**D4 - Semantic tokens: never.** Treesitter is the highlighting layer. Removed from this document. Reopen only with evidence that treesitter's Java or Kotlin highlighting is inadequate.
 
 ## 11. Build order
 
@@ -151,7 +152,6 @@ $/ij/search             C→S  request      IDE-scoped project search (Tier 4)
 5. **On-save and generation:** format-on-save, generate code, extract/inline/move.
 6. **Hierarchies, inlay hints, code lens, workspace diagnostics.**
 7. **Project extensions:** run configurations, build, search.
-8. **Semantic tokens** if measurement says it is worth it (D4).
 
 ## 12. Acceptance for every feature
 
