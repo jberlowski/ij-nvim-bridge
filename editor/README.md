@@ -29,19 +29,19 @@ nothing and prints nothing. `:IjBridge` says which state a buffer is in.
 
 ### Keys (LazyVim)
 
-Everything the Bridge adds that is **not** a standard LSP feature is bound under one prefix, **`<leader>a`**, so it is all together. Standard features stay on LazyVim's own keys (`gd`, `grr`, `<leader>ca`, `<leader>cr`, `<leader>cf`, `K`, ...); which-key shows the group when you press `<leader>a` and wait, and each entry is described "IntelliJ: ...".
+Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto and hover), `<leader>ca` / `<leader>cA` (code actions, including the quick fixes, generate code and source actions), `<leader>co` (organize imports: LazyVim binds it for any server that offers it), `<leader>cr` (rename), `<leader>cR` (rename file), `<leader>cf` (format), `<leader>uh` (inlay hints). What the Bridge adds that is **not** standard LSP goes where LazyVim keeps that kind of thing:
 
-| Key | Does | Same as |
-|---|---|---|
-| `<leader>ai` | State of this buffer (attached, indexing, ...) | `:IjBridge` |
-| `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | `:IjBridge open` |
-| `<leader>ag` | New file from an IntelliJ template (asks kind and name) | `:IjBridge new` |
-| `<leader>all` | Open the Editor log | `:IjBridge log` |
-| `<leader>alb` | Open the Brain log | `:IjBridge brainlog` |
-| `<leader>alr` | Gather a bug report into one buffer | `:IjBridge report` |
-| `<leader>alv` | Set the log level | `:IjBridge loglevel` |
+| Section | Key | Does | Where it exists |
+|---|---|---|---|
+| file/find | `<leader>fN` | New file from an IntelliJ template (asks kind and name); `fn` is LazyVim's own New File | Kotlin and Java buffers **with an IntelliJ connection** |
+| miscellaneous | `<leader>ai` | State of this buffer (attached, indexing, ...) | everywhere |
+| | `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | everywhere (it is how to get a connection) |
+| | `<leader>ak` | List the keys, and why one is missing here | everywhere |
+| | `<leader>all` `alb` `alr` `alv` | Editor log, Brain log, bug report, log level | everywhere |
 
-`:IjBridge keys` lists what is bound. **LazyVim's AI extras (Claude Code, Avante, Copilot Chat, Sidekick) share the `<leader>a` prefix** as "+ai", with `C a b c d e f h m n p q r s t v x` under it. The keys above are ones they do not use (`g i j k l o u w y z` are free), and the test suite reads LazyVim's extras and fails if one ever collides. An empty mapping on the prefix, which is how they name their group, does not block the Bridge's keys; an existing mapping is never overwritten (it is skipped, and the log says so), and if the prefix itself does something, nothing is bound. Change it with `prefix = ...`.
+**A key that needs IntelliJ exists only where IntelliJ is.** It is made, buffer-locally, when the buffer attaches to a Session, only for the filetypes it is for, and removed when the Session goes (and back when it reconnects). In a buffer with no connection, or a file of another kind, it is not there at all: which-key does not offer it and it cannot shadow anything. `:IjBridge keys` (`<leader>ak`) lists what is bound here and says why a key is missing.
+
+`<leader>g` is git and plain `g` is goto in LazyVim; nothing of the Bridge's belongs to either. **LazyVim's AI extras (Claude Code, Avante, Copilot Chat, Sidekick) share `<leader>a`** as "+ai", with `C a b c d e f h m n p q r s t v x` under it. The miscellaneous keys are ones they do not use (`g i j k l o u w y z` are free), and the test suite reads LazyVim's extras and fails if one ever collides. An empty mapping on the prefix, which is how they name their group, does not block them; an existing mapping is never overwritten (skipped, and the log says so); if the prefix itself does something, no miscellaneous key is bound. `setup{ prefix = ..., keys = false, sections = false }` change it.
 
 ```lua
 -- lazy.nvim, LazyVim

@@ -586,7 +586,7 @@ function M.report()
   return out
 end
 
---- @param opts? { prefix?: string, keys?: boolean, idea_cmd?: string, open_timeout?: integer } keys are bound under `prefix` (default `<leader>a`) unless `keys = false`
+--- @param opts? { prefix?: string, keys?: boolean, sections?: boolean, idea_cmd?: string, open_timeout?: integer } miscellaneous keys under `prefix` (default `<leader>a`), the others by section (`sections = false` to skip them); `keys = false` binds nothing
 function M.setup(opts)
   M.opts = opts or {}
   local group = vim.api.nvim_create_augroup('IjBridge', { clear = true })
