@@ -27,6 +27,9 @@ M.sessions = {}
 --- one that was never attached.
 M.attached = {}
 
+--- Buffers in a Project Root whose file does not exist on disk yet: attached by their first write.
+M.unwritten = {}
+
 --- Project Roots whose Session died unexpectedly and are being retried:
 --- root -> { attempt = n }.
 M.offline = {}
@@ -193,6 +196,13 @@ function M.attach(buf)
     log.debug('dormant', { buf = buf, file = vim.api.nvim_buf_get_name(buf) })
     return nil -- Dormant: no message, no latency, no surprises
   end
+  if not vim.uv.fs_stat(vim.api.nvim_buf_get_name(buf)) then
+    -- A file that does not exist yet has no meaning to the IDE, and cannot be opened there:
+    -- it is attached by its first write.
+    M.unwritten[buf] = true
+    log.debug('unwritten', { buf = buf, file = vim.api.nvim_buf_get_name(buf) })
+    return nil
+  end
   log.debug('attach', { buf = buf, file = vim.api.nvim_buf_get_name(buf), root = entry.root })
   if M.offline[entry.root] then
     if live_client(entry.root) then
@@ -321,6 +331,76 @@ local function release_if_clean(buf)
   end
 end
 
+--- The Session that serves `dir`, for a request about a place rather than a buffer.
+local function client_for(dir)
+  local here = M.client(0)
+  if here then
+    return here
+  end
+  for _, client in ipairs(vim.lsp.get_clients({ name = M.name })) do
+    local root = client.config.root_dir
+    if root and (dir == root or dir:sub(1, #root + 1) == root .. '/') and not client:is_stopped() then
+      return client
+    end
+  end
+end
+
+local KINDS = {
+  kotlin = { 'class', 'interface', 'enum', 'object', 'dataClass', 'file' },
+  java = { 'class', 'interface', 'enum', 'record', 'annotation' },
+}
+
+--- A new class, interface, enum or record, from IntelliJ's own file templates, with the right
+--- `package` line for where it goes. The Brain says what the file should hold; this writes it,
+--- and the first write is what makes the IDE see it.
+---
+--- @param opts { dir?: string, name: string, template?: string, language?: 'kotlin'|'java' }
+--- @param callback? fun(path: string, result: table)
+function M.new_file(opts, callback)
+  local dir = opts.dir or vim.fs.dirname(vim.api.nvim_buf_get_name(0))
+  local client = client_for(dir)
+  if not client then
+    vim.notify('ij-bridge: no IntelliJ is serving ' .. dir, vim.log.levels.WARN)
+    return
+  end
+  local language = opts.language or (vim.bo.filetype == 'java' and 'java' or 'kotlin')
+  client:request('$/ij/newFile', {
+    directory = vim.uri_from_fname(dir),
+    name = opts.name,
+    template = opts.template or 'class',
+    language = language,
+  }, function(err, result)
+    if err or not result then
+      vim.notify('ij-bridge: ' .. (err and err.message or 'no answer'), vim.log.levels.WARN)
+      return
+    end
+    local path = vim.uri_to_fname(result.uri)
+    vim.fn.mkdir(vim.fs.dirname(path), 'p')
+    vim.cmd.edit(vim.fn.fnameescape(path))
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split((result.text:gsub('\n$', '')), '\n', { plain = true }))
+    vim.cmd.write()
+    log.info('new_file', { path = path, package = result.package, template = result.template })
+    if callback then
+      callback(path, result)
+    end
+  end, 0)
+end
+
+--- `:IjBridge new [dir]`: asks what and what to call it.
+function M.new_file_interactive(dir)
+  local language = vim.bo.filetype == 'java' and 'java' or 'kotlin'
+  vim.ui.select(KINDS[language], { prompt = 'New ' .. language .. ' file' }, function(kind)
+    if not kind then
+      return
+    end
+    vim.ui.input({ prompt = kind .. ' name: ' }, function(name)
+      if name and name ~= '' then
+        M.new_file({ dir = dir ~= '' and dir or nil, name = name, template = kind, language = language })
+      end
+    end)
+  end)
+end
+
 --- What `:IjBridge` says about the current buffer.
 function M.show_status()
   local buf = vim.api.nvim_get_current_buf()
@@ -432,6 +512,11 @@ function M.setup(_)
   vim.api.nvim_create_autocmd('BufWritePost', {
     group = group,
     callback = function(args)
+      if M.unwritten[args.buf] then
+        M.unwritten[args.buf] = nil
+        M.attach(args.buf)
+        return
+      end
       if args.buf ~= vim.api.nvim_get_current_buf() then
         release_if_clean(args.buf)
       end
@@ -447,6 +532,7 @@ function M.setup(_)
   vim.api.nvim_create_autocmd({ 'BufWipeout', 'BufUnload' }, {
     group = group,
     callback = function(args)
+      M.unwritten[args.buf] = nil
       M.attached[args.buf] = nil
     end,
   })
@@ -468,13 +554,15 @@ function M.setup(_)
       M.set_log_level(rest)
     elseif sub == 'report' then
       M.report()
+    elseif sub == 'new' then
+      M.new_file_interactive(rest)
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir])')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'log', 'brainlog', 'loglevel', 'report' }
+      return { 'status', 'log', 'brainlog', 'loglevel', 'report', 'new' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })

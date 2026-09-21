@@ -154,6 +154,12 @@ class MirrorSet(private val project: Project) : Disposable {
         val m = mirrors[uri] ?: return
         if (version >= 0) m.version = version
         m.convergent = true
+        // Neovim has just written the file. An IDE that is not the active application does not
+        // look at the disk by itself, and a file watcher may not be running, so its cached view of
+        // the file is what it was before the write - and it is what a released Mirror reloads to,
+        // which read as the file having lost its edits. Look now: one file. The veto stays, so the
+        // Mirror's own text is not reloaded, only what the IDE believes the disk holds.
+        com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, false, false, m.file)
     }
 
     /** A Session closed its buffer. The Mirror goes only when no Session has it open. */

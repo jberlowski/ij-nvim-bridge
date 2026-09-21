@@ -73,6 +73,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val insertion = CompletionInsertion(project, brain.completion.store)
     private val renames = Rename(project, locations)
     private val moves = FileMoves(project, locations)
+    private val newFiles = NewFile(project)
 
     companion object {
         val METHODS = setOf(
@@ -82,7 +83,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
             "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
-            "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles",
+            "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles", "\$/ij/newFile",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
@@ -97,7 +98,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             ?: params["data"]?.jsonObject?.get("uri")?.jsonPrimitive?.contentOrNull
         val mirror = uri?.let { brain.mirrors.get(it) }
         // workspace/symbol asks about the project, not about a buffer.
-        if (mirror == null && method != "workspace/symbol" && method != "workspace/willRenameFiles") {
+        if (mirror == null && method != "workspace/symbol" && method != "workspace/willRenameFiles" && method != "\$/ij/newFile") {
             transport.send(Wire.error(id, RpcError.INVALID_PARAMS, "not mirrored: $uri"))
             return
         }
@@ -169,6 +170,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             return structure.workspaceSymbols(params["query"]?.jsonPrimitive?.contentOrNull ?: "")
         }
         if (method == "workspace/willRenameFiles") return moves.willRename(params)
+        if (method == "\$/ij/newFile") return newFiles.create(params)
         mirror!!
         val doc = mirror.document
         // selectionRange carries a list of positions instead of one.

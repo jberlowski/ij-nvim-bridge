@@ -350,6 +350,24 @@ def stats(nvim) -> dict:
     return nvim.exec_lua("return require('ij_bridge.blink').stats")
 
 
+def _cache_lines(nvim) -> list[str]:
+    """The Editor's last completion requests, boiled down to what decides a cache hit:
+    key = buffer:row:col:hash-of-the-text:other-buffers-term."""
+    import json
+    out = []
+    for line in nvim.exec_lua("return vim.fn.readfile(require('ij_bridge.log').path)")[-80:]:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("ev") == "completion_request":
+            b, r, c, sha, others = (e["key"] + "::::").split(":")[:5] if e.get("key") else ("-",) * 5
+            out.append(f"request buf={b} at={r}:{c} text={sha[:8]} others={others} hit={e['hit']} cached={e['cached']}")
+        elif e.get("ev", "").startswith("completion_"):
+            out.append(e["ev"])
+    return out[-12:]
+
+
 class TestIncrementalCompletion:
     """SPEC.md §12 Next: another character asks IntelliJ again while the menu
     keeps showing what it has, and backspacing is answered from a small cache."""
@@ -383,8 +401,7 @@ class TestIncrementalCompletion:
             f"{took:.1f}s since the first answer was cached (the cache keeps answers for 5 s)", stats(nvim),
             f"status events {status_seen} -> {nvim.exec_lua('return require(\'ij_bridge\').status_events')}",
             nvim.exec_lua("return require('ij_bridge').states"),
-            [l for l in nvim.exec_lua("return vim.fn.readfile(require('ij_bridge.log').path)")[-60:]
-             if "completion_" in l])
+            _cache_lines(nvim))
         assert back["count"] == first["count"], "the earlier answer, whole, not a subset"
         assert back["found"]["computeMetricNumber000"]
 
@@ -573,3 +590,46 @@ class TestEditorOverhead:
         print("\n  editor-in-loop " + json.dumps(report))
         assert all(o > 0 for o in overhead)
         assert p95(overhead) < OVERHEAD_BUDGET_MS, report
+
+
+# ------------------------------------------------------------ a file that does not exist yet
+class TestNewFiles:
+    NEW = f"{SRC}/probe/BrandNew.kt"
+
+    def test_a_file_that_does_not_exist_yet_is_left_alone_until_it_is_written(self, nvim, probe, bridge_container):
+        bridge_container.exec(f"rm -f {self.NEW}", check=False)
+        try:
+            nvim.command(f"edit {self.NEW}")
+            nvim.current.buffer[:] = ["package dev.bridge.fixture.probe", "", "class BrandNew"]
+            assert attached(nvim) == 0, "there is nothing in the IDE to mirror yet"
+            assert nvim.eval("v:errmsg") == ""
+            assert not [m for m in probe.debug_state()["mirrors"] if m["uri"].endswith("BrandNew.kt")]
+
+            nvim.command("write")
+            wait_until(lambda: attached(nvim) == 1, message="the first write never attached it")
+            wait_until(lambda: [m for m in probe.debug_state(text=True)["mirrors"] if m["uri"].endswith("BrandNew.kt")],
+                       message="the Brain never mirrored the new file")
+            (m,) = [m for m in probe.debug_state(text=True)["mirrors"] if m["uri"].endswith("BrandNew.kt")]
+            assert "class BrandNew" in m["text"]
+        finally:
+            nvim.command("silent! %bwipeout!")
+            bridge_container.exec(f"rm -f {self.NEW}", check=False)
+
+    def test_new_file_from_a_template_is_written_and_then_seen_by_the_ide(self, nvim, probe, bridge_container):
+        directory = f"{SRC}/probe/created"
+        path = f"{directory}/Ticket.kt"
+        bridge_container.exec(f"rm -rf {directory}", check=False)
+        try:
+            nvim.command(f"edit {SRC}/probe/Shapes.kt")
+            wait_until(lambda: attached(nvim) == 1)
+            nvim.exec_lua(f"require('ij_bridge').new_file({{ dir = '{directory}', name = 'Ticket', template = 'class' }})")
+            wait_until(lambda: bridge_container.exec(f"test -f {path} && echo y || echo n").stdout.strip() == "y",
+                       timeout=30, message="the file was never written")
+            text = bridge_container.read_file(path)
+            assert "package dev.bridge.fixture.probe.created" in text and "class Ticket" in text, text
+            wait_until(lambda: [m for m in probe.debug_state()["mirrors"] if m["uri"].endswith("created/Ticket.kt")],
+                       message="the IDE never saw the new file")
+            assert nvim.eval("v:errmsg") == ""
+        finally:
+            nvim.command("silent! %bwipeout!")
+            bridge_container.exec(f"rm -rf {directory}", check=False)

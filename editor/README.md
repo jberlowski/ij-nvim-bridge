@@ -27,6 +27,10 @@ fuzzy = { sorts = { 'sort_text' } },
 A file that is not inside an open IntelliJ project is **Dormant**: the plugin does
 nothing and prints nothing. `:IjBridge` says which state a buffer is in.
 
+### New files and moving files
+
+`:IjBridge new [dir]` asks for a kind (class, interface, enum, ...) and a name and creates the file from IntelliJ's own template, with the right `package` line. Programmatically: `require('ij_bridge').new_file({ dir = ..., name = 'Ticket', template = 'class', language = 'kotlin' })`. Moving or renaming a file with a plugin that sends `workspace/willRenameFiles` (snacks, oil.nvim, neo-tree) updates its `package` line and every import that names it. A file is attached to the IDE by its first write: a buffer for a file that does not exist yet is left alone.
+
 ### When something goes wrong
 
 Both halves keep a bounded JSON-lines log, always on, that records what was asked and answered (never your code):

@@ -270,6 +270,10 @@ Buffers left by one test, and a Mirror they keep alive, change what the next tes
 
 `nvim --listen` accepts connections before lazy.nvim has loaded its plugins: `require('blink.cmp')` failed at fixture setup on some runs. `start_nvim` waits for it to load and for the fuzzy library's version file, which is written last.
 
+### The IDE in the container has no file watcher
+
+`fsnotifier` exits at start (a zombie in `ps`), so nothing tells the IDE about files written behind its back, which a real IDE with a working watcher hears within a moment. The harness compensates with `$/ij/debug/refresh` (`project_files` and the move tests use it), and the Brain itself refreshes what Neovim tells it changed (`didSave`, `didRenameFiles`, `didCreateFiles`, `didDeleteFiles`). Why the watcher exits has not been found. Any test that writes a file with `docker exec` and then asks the IDE about it must refresh first.
+
 ## 14. Open
 
 - **blink.cmp's binary is not baked into the image.** It downloads at first use in every container, so the harness needs network and the `nvim_session` fixture waits for it. Baking it into the image (`nvim --headless` with blink loaded, at build time) would remove the network dependency and about a minute per run.
