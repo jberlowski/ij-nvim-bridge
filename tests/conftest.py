@@ -260,6 +260,14 @@ def project_files(bridge, bridge_container):
         settle()
         return path
 
+    def add_many(files: dict) -> None:
+        """Several files, and the IDE is left to settle once, not once for each."""
+        for path, data in files.items():
+            bridge_container.write_bytes(path, data.encode() if isinstance(data, str) else data)
+            made.append(path)
+        settle()
+
+    add.many = add_many
     yield add
     if made:
         for path in made:

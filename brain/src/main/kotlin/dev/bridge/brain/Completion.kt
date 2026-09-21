@@ -39,7 +39,7 @@ object DebugLevers {
     @Volatile var navigationDelayMs = 0L
 }
 
-class CompletionEngine(private val project: Project) : Disposable {
+class CompletionEngine(private val project: Project, private val record: BridgeLog? = null) : Disposable {
 
     class Request(
         val id: JsonElement?,
@@ -115,6 +115,7 @@ class CompletionEngine(private val project: Project) : Disposable {
                 run(request)
             } catch (t: Throwable) {
                 log.warn("bridge: completion failed", t)
+                record?.error(request.transport.session, "completion", t)
                 if (!request.responded) {
                     request.responded = true
                     request.transport.send(Wire.error(request.id, RpcError.INTERNAL,

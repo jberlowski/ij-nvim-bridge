@@ -5,6 +5,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.io.InputStream
@@ -76,8 +78,23 @@ object Wire {
     }
 }
 
-/** Serialises writes: completion streams and request replies share one socket. */
-class Transport(private val out: OutputStream) {
+/**
+ * Serialises writes: completion streams and request replies share one socket.
+ *
+ * It also keeps the Brain's record of what was asked and answered (BridgeLog): every
+ * request is [begin]-ed when it arrives, so its reply can say how long it took.
+ */
+class Transport(private val out: OutputStream, val session: String = "-", private val log: BridgeLog? = null) {
+
+    private class Pending(val method: String, val at: Long)
+
+    private val pending = java.util.concurrent.ConcurrentHashMap<String, Pending>()
+
+    /** A request has arrived. */
+    fun begin(id: JsonElement?, method: String, receivedNanos: Long) {
+        if (id != null) pending[id.toString()] = Pending(method, receivedNanos)
+    }
+
     @Synchronized
     fun send(message: JsonObject) {
         val body = Wire.json.encodeToString(JsonObject.serializer(), message)
@@ -85,6 +102,63 @@ class Transport(private val out: OutputStream) {
         out.write("Content-Length: ${body.size}\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
         out.write(body)
         out.flush()
+        record(message, body.size)
+    }
+
+    private fun record(message: JsonObject, bytes: Int) {
+        val log = log ?: return
+        try {
+            val id = message["id"]
+            val method = message["method"]?.jsonPrimitive?.contentOrNull
+            if (method != null) {                                   // a notification the Brain sent
+                if (!log.enabled(BridgeLog.Level.DEBUG)) return
+                val params = message["params"] as? JsonObject
+                log.debug(session, "send") {
+                    put("method", method)
+                    params?.get("uri")?.let { put("uri", it) }
+                    (params?.get("items") as? kotlinx.serialization.json.JsonArray)?.let { put("items", it.size) }
+                    (params?.get("diagnostics") as? kotlinx.serialization.json.JsonArray)?.let { put("diagnostics", it.size) }
+                    params?.get("state")?.let { put("state", it) }
+                    params?.get("done")?.let { put("done", it) }
+                    log.payload(params)?.let { put("params", it) }
+                }
+                return
+            }
+            if (id == null) return
+            val started = pending.remove(id.toString())
+            val ms = started?.let { (System.nanoTime() - it.at) / 1_000_000.0 }
+            val error = message["error"] as? JsonObject
+            val result = message["result"]
+            val slow = ms != null && ms > SLOW_MS
+            val level = if (error != null || slow) BridgeLog.Level.INFO else BridgeLog.Level.DEBUG
+            if (!log.enabled(level)) return
+            val fields: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit = {
+                put("method", started?.method ?: "?")
+                put("id", id)
+                if (ms != null) put("ms", Math.round(ms * 10) / 10.0)
+                put("bytes", bytes)
+                if (error != null) {
+                    error["code"]?.let { put("code", it) }
+                    error["message"]?.let { put("message", it) }
+                }
+                (result as? kotlinx.serialization.json.JsonArray)?.let { put("n", it.size) }
+                ((result as? JsonObject)?.get("items") as? kotlinx.serialization.json.JsonArray)?.let { put("n", it.size) }
+                ((result as? JsonObject)?.get("timings"))?.let { put("timings", it) }
+                log.payload(result)?.let { put("result", it) }
+            }
+            when {
+                error != null -> log.warn(session, "response", fields)
+                slow -> log.info(session, "slow_response", fields)
+                else -> log.debug(session, "response", fields)
+            }
+        } catch (_: Throwable) {
+            // recording must never break sending
+        }
+    }
+
+    companion object {
+        /** A reply slower than this is worth a line even when only the Brain's life is being recorded. */
+        const val SLOW_MS = 250.0
     }
 }
 

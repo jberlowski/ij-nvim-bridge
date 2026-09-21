@@ -17,6 +17,7 @@
 -- set `fuzzy.sorts = { 'sort_text' }`: the Brain's `sortText` encodes IntelliJ's
 -- order.
 local uv = vim.uv
+local log = require('ij_bridge.log')
 
 local M = {}
 
@@ -139,6 +140,7 @@ local function interim(old, items)
     n.emitted[item_key(item)] = true
   end
   M.stats.interim = M.stats.interim + 1
+  log.debug('completion_interim', { row = n.row, col = n.col, items = #items })
   n.callback({ items = vim.deepcopy(items), is_incomplete_forward = true, is_incomplete_backward = true })
 end
 
@@ -207,8 +209,10 @@ function Source:get_completions(ctx, callback)
   -- IntelliJ's matching is the authority (Passthrough), the cache only skips the wait.
   local key = cache_key(ctx, client)
   local hit = cache_get(key)
+  log.debug('completion_request', { row = row, col = col, key = key, hit = hit ~= nil, cached = vim.tbl_count(cache.map) })
   if hit then
     M.stats.hits = M.stats.hits + 1
+    log.debug('completion_cache_hit', { row = row, col = col, items = #hit })
     callback({ items = vim.deepcopy(hit), is_incomplete_forward = true, is_incomplete_backward = true })
     return function() end
   end
@@ -235,6 +239,7 @@ function Source:get_completions(ctx, callback)
       -- backspace, and show it to the request that replaced it.
       if result and not err and result.done and not result.isIncomplete and not result.degraded then
         M.stats.late = M.stats.late + 1
+        log.debug('completion_late_answer', { row = state.row, col = state.col, items = #result.items })
         local items = convert(result.items)
         cache_put(state.key, vim.deepcopy(items))
         interim(state, items)
@@ -308,6 +313,7 @@ function Source:resolve(item, callback)
       table.remove(M.resolves, 1)
     end
     if err or not result then
+      log.warn('resolve_fell_back', { label = item.label, err = err and err.message })
       callback(item)
       return
     end

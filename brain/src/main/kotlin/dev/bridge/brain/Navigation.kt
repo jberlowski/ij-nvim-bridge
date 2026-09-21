@@ -72,6 +72,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val codeActions = CodeActions(project)
     private val insertion = CompletionInsertion(project, brain.completion.store)
     private val renames = Rename(project, locations)
+    private val moves = FileMoves(project, locations)
 
     companion object {
         val METHODS = setOf(
@@ -81,7 +82,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
             "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
-            "textDocument/prepareRename", "textDocument/rename",
+            "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
@@ -96,7 +97,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             ?: params["data"]?.jsonObject?.get("uri")?.jsonPrimitive?.contentOrNull
         val mirror = uri?.let { brain.mirrors.get(it) }
         // workspace/symbol asks about the project, not about a buffer.
-        if (mirror == null && method != "workspace/symbol") {
+        if (mirror == null && method != "workspace/symbol" && method != "workspace/willRenameFiles") {
             transport.send(Wire.error(id, RpcError.INVALID_PARAMS, "not mirrored: $uri"))
             return
         }
@@ -149,6 +150,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                 job.reply(Wire.error(id, RpcError.CONTENT_MODIFIED, "IntelliJ is indexing; ask again when it is done"))
             } catch (t: Throwable) {
                 log.warn("bridge: $method failed", t)
+                brain.record.error(transport.session, method, t)
                 job.reply(Wire.error(id, RpcError.INTERNAL, "${t::class.java.simpleName}: ${t.message}"))
             } finally {
                 inflight.remove(key)
@@ -166,6 +168,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
         if (method == "workspace/symbol") {
             return structure.workspaceSymbols(params["query"]?.jsonPrimitive?.contentOrNull ?: "")
         }
+        if (method == "workspace/willRenameFiles") return moves.willRename(params)
         mirror!!
         val doc = mirror.document
         // selectionRange carries a list of positions instead of one.

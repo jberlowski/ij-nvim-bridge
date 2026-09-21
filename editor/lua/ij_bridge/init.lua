@@ -6,6 +6,7 @@
 -- after pending changes are flushed - SPEC.md §5.4). What this file adds is the
 -- Bridge's policy: when to be Dormant, and which buffers are Mirrored.
 local registry = require('ij_bridge.registry')
+local log = require('ij_bridge.log')
 
 local M = {}
 
@@ -16,6 +17,10 @@ M.status_events = 0
 
 --- The Brain's last announced state per Session (SPEC.md §8), by client id.
 M.states = {}
+
+--- What each Session's Brain said about itself at `initialize`: its session id (the same one its
+--- log prints) and where its log is. By client id.
+M.sessions = {}
 
 --- Buffers that *should* be Mirrored: attached and not released. This is what a
 --- reconnect must restore, and how a buffer whose Session died is told apart from
@@ -32,6 +37,7 @@ local leaving = false
 --- when a reconnect misbehaves. Bounded: it must never grow.
 M.events = {}
 local function note(what)
+  log.info('conn', { what = what })
   table.insert(M.events, ('%.1f %s'):format(vim.uv.hrtime() / 1e9 % 10000, what))
   if #M.events > 60 then
     table.remove(M.events, 1)
@@ -47,6 +53,7 @@ local reasons = {
 --- Called for every `$/ij/status` notification.
 function M.on_status(client_id, params)
   M.states[client_id] = params
+  log.info('status', { client = client_id, state = params.state, reason = params.reason })
   M.status_events = M.status_events + 1
   -- What IntelliJ would have said may change when it stops or finishes indexing.
   require('ij_bridge.blink').clear_cache()
@@ -111,7 +118,7 @@ local function connect(buf, entry)
   note('connect buf ' .. buf)
   local id = vim.lsp.start({
     name = M.name,
-    cmd = vim.lsp.rpc.connect(entry.sock),
+    cmd = log.traced_connect(entry.sock),
     root_dir = entry.root,
     capabilities = capabilities(),
     handlers = {
@@ -127,7 +134,13 @@ local function connect(buf, entry)
     -- A peer that dies with data unread is reset, not closed: Neovim reports a READ_ERROR
     -- and leaves the client standing, so on_exit never comes and the Bridge would go on
     -- believing in a Brain that is gone. A broken transport is a lost connection.
+    on_init = function(client, result)
+      local info = result and result.serverInfo or {}
+      M.sessions[client.id] = info
+      log.info('session', { client = client.id, session = info.session, brain_log = info.log, brain = info.version })
+    end,
     on_error = function(code, err)
+      log.warn('transport_error', { code = code, err = tostring(err) })
       if code ~= vim.lsp.rpc.client_errors.READ_ERROR then
         return
       end
@@ -144,6 +157,7 @@ local function connect(buf, entry)
     on_exit = function(code, signal, client_id)
       note(('exit client %d code=%s signal=%s'):format(client_id, tostring(code), tostring(signal)))
       M.states[client_id] = nil
+      M.sessions[client_id] = nil
       if not leaving then
         vim.schedule(function()
           M.lost(entry.root)
@@ -176,8 +190,10 @@ function M.attach(buf)
   end
   local entry = registry.resolve(vim.api.nvim_buf_get_name(buf))
   if not entry then
+    log.debug('dormant', { buf = buf, file = vim.api.nvim_buf_get_name(buf) })
     return nil -- Dormant: no message, no latency, no surprises
   end
+  log.debug('attach', { buf = buf, file = vim.api.nvim_buf_get_name(buf), root = entry.root })
   if M.offline[entry.root] then
     if live_client(entry.root) then
       M.offline[entry.root] = nil -- a Session is up after all: not offline
@@ -288,6 +304,7 @@ end
 
 --- Release the Mirror for `buf`: didClose is sent by detaching.
 function M.detach(buf)
+  log.debug('detach', { buf = buf })
   M.attached[buf] = nil
   for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf, name = M.name })) do
     vim.lsp.buf_detach_client(buf, client.id)
@@ -302,6 +319,94 @@ local function release_if_clean(buf)
   if buftype_ok(buf) and not vim.bo[buf].modified then
     M.detach(buf)
   end
+end
+
+--- What `:IjBridge` says about the current buffer.
+function M.show_status()
+  local buf = vim.api.nvim_get_current_buf()
+  local entry = registry.resolve(vim.api.nvim_buf_get_name(buf))
+  if not entry and M.attached[buf] then
+    print('ij-bridge: disconnected; the Brain is not running, retrying')
+  elseif not entry then
+    print('ij-bridge: Dormant (no Project Root matches this buffer)')
+  elseif M.client(buf) then
+    local status = M.status(buf)
+    local state = not status and 'state not reported yet'
+      or status.state == 'Ready' and 'ready'
+      or (reasons[status.reason] or 'not ready')
+    print(('ij-bridge: attached to %s (%s), %s'):format(entry.root, entry.ide or '?', state))
+  elseif M.attached[buf] then
+    print(('ij-bridge: disconnected from %s; reconnecting'):format(entry.root or '?'))
+  else
+    print(('ij-bridge: %s is serving this buffer, but it is not attached'):format(entry.root))
+  end
+end
+
+--- Where the Brain that serves the current buffer keeps its log: as it said at connect,
+--- or by the convention it names its file with, for one not connected yet.
+function M.brain_log_path()
+  for _, info in pairs(M.sessions) do
+    if info.log then
+      return info.log
+    end
+  end
+  local entry = registry.resolve(vim.api.nvim_buf_get_name(0))
+  local hash = entry and entry.sock and entry.sock:match('([^/]+)%.sock$')
+  if hash then
+    local state = os.getenv('XDG_STATE_HOME')
+    state = (state and state ~= '') and state or vim.fs.joinpath(vim.uv.os_homedir(), '.local', 'state')
+    return vim.fs.joinpath(state, 'ij-nvim-bridge', 'brain-' .. hash .. '.log')
+  end
+end
+
+--- Both logs' level. The Brain's is asked, so that what is recorded on the two sides agrees.
+function M.set_log_level(level)
+  if level ~= 'off' and level ~= 'info' and level ~= 'debug' and level ~= 'trace' then
+    print('ij-bridge: log level is one of off, info, debug, trace (trace records payloads, which contain code)')
+    return
+  end
+  log.level = (level == 'trace') and 'debug' or level
+  local client = M.client(0)
+  if client then
+    client:request('$/ij/log', { level = level }, function(err, result)
+      print(err and ('ij-bridge: the Brain refused: ' .. err.message)
+        or ('ij-bridge: log level ' .. level .. '; Brain log ' .. (result and result.path or '?')))
+    end, 0)
+  else
+    print('ij-bridge: Editor log level ' .. log.level .. ' (no Brain connected)')
+  end
+end
+
+--- Everything worth pasting into a bug report, in one scratch buffer: versions, the state of the
+--- Bridge, and the tail of both logs.
+function M.report()
+  local out = { '# ij-nvim-bridge report', '' }
+  local v = vim.version()
+  local uname = vim.uv.os_uname()
+  vim.list_extend(out, {
+    ('nvim %d.%d.%d, %s %s %s'):format(v.major, v.minor, v.patch, uname.sysname, uname.release, uname.machine),
+    'buffer: ' .. vim.api.nvim_buf_get_name(0),
+    'statusline: ' .. M.statusline(),
+    'offline: ' .. vim.inspect(M.offline),
+    'attached buffers: ' .. vim.inspect(vim.tbl_keys(M.attached)),
+    'sessions: ' .. vim.inspect(M.sessions),
+    'states: ' .. vim.inspect(M.states),
+    'editor log: ' .. log.path .. ' (level ' .. log.level .. ')',
+    'brain log: ' .. tostring(M.brain_log_path()),
+    '',
+    '## recent connection events',
+  })
+  vim.list_extend(out, M.events)
+  vim.list_extend(out, { '', '## editor log (last 60 lines)' })
+  vim.list_extend(out, log.tail(log.path, 60) or { '(none)' })
+  local brain = M.brain_log_path()
+  vim.list_extend(out, { '', '## brain log (last 60 lines)' })
+  vim.list_extend(out, brain and log.tail(brain, 60) or { '(not readable from here)' })
+  out = vim.split(table.concat(out, '\n'), '\n', { plain = true }) -- inspected tables span lines
+  vim.cmd.new()
+  vim.bo.buftype, vim.bo.bufhidden, vim.bo.swapfile, vim.bo.filetype = 'nofile', 'wipe', false, 'markdown'
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, out)
+  return out
 end
 
 function M.setup(_)
@@ -346,25 +451,33 @@ function M.setup(_)
     end,
   })
 
-  vim.api.nvim_create_user_command('IjBridge', function()
-    local buf = vim.api.nvim_get_current_buf()
-    local entry = registry.resolve(vim.api.nvim_buf_get_name(buf))
-    if not entry and M.attached[buf] then
-      print('ij-bridge: disconnected; the Brain is not running, retrying')
-    elseif not entry then
-      print('ij-bridge: Dormant (no Project Root matches this buffer)')
-    elseif M.client(buf) then
-      local status = M.status(buf)
-      local state = not status and 'state not reported yet'
-        or status.state == 'Ready' and 'ready'
-        or (reasons[status.reason] or 'not ready')
-      print(('ij-bridge: attached to %s (%s), %s'):format(entry.root, entry.ide or '?', state))
-    elseif M.attached[buf] then
-      print(('ij-bridge: disconnected from %s; reconnecting'):format(entry.root or '?'))
+  vim.api.nvim_create_user_command('IjBridge', function(opts)
+    local sub, rest = opts.args:match('^(%S*)%s*(.*)$')
+    if sub == '' or sub == 'status' then
+      M.show_status()
+    elseif sub == 'log' then
+      vim.cmd.split(log.path)
+    elseif sub == 'brainlog' then
+      local path = M.brain_log_path()
+      if path and vim.uv.fs_stat(path) then
+        vim.cmd.split(path)
+      else
+        print('ij-bridge: no Brain log found' .. (path and (' at ' .. path) or ''))
+      end
+    elseif sub == 'loglevel' then
+      M.set_log_level(rest)
+    elseif sub == 'report' then
+      M.report()
     else
-      print(('ij-bridge: %s is serving this buffer, but it is not attached'):format(entry.root))
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report)')
     end
-  end, { desc = 'Show whether this buffer is served by an IntelliJ Brain' })
+  end, {
+    nargs = '?',
+    complete = function()
+      return { 'status', 'log', 'brainlog', 'loglevel', 'report' }
+    end,
+    desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
+  })
 
   M.attach(vim.api.nvim_get_current_buf())
 end

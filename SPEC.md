@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state, incremental completion and the navigation core (definition, type definition, implementation, references, hover, highlights) and symbols (document and workspace symbols, folding, selection ranges, signature help) are built, as are formatting, organize imports, completion insertion and rename. Next is code actions and rename; see [FEATURES.md](./FEATURES.md).
+Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state, incremental completion and the navigation core (definition, type definition, implementation, references, hover, highlights) and symbols (document and workspace symbols, folding, selection ranges, signature help) are built, as are formatting, organize imports, completion insertion, rename and moving a file; the debug logs (§15) are built. Next is code actions and rename; see [FEATURES.md](./FEATURES.md).
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -346,7 +346,7 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 **Next.**
 
-Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. What comes next is the rest of the edits (more code actions, new file and move), in [FEATURES.md](./FEATURES.md) §11.
+Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. What comes next is the rest of the edits (more code actions, new file from a template), in [FEATURES.md](./FEATURES.md) §11.
 
 **Deferred.** Bidirectional caret following · run configurations · refactorings beyond rename · licensed-tier harness profile and deep Spring assertions.
 
@@ -364,6 +364,24 @@ Nothing further is queued from v1: the two features recorded here (incremental c
 | Harness | Python + pytest, OCI container via OrbStack | [HARNESS.md](./HARNESS.md) · [ADR-0006](./docs/adr/0006-harness-is-a-mac-local-container.md) |
 
 **Tier.** Free tier is fully functional for Java, Kotlin and Gradle. Deep Spring support — bean graph, `@Autowired` resolution, config-key completion — is paid. Per Passthrough this needs no code: those Capabilities are simply advertised or not.
+
+## 15. The logs
+
+When something goes wrong on somebody else's machine, the only evidence is what was written down at the time. Both halves keep a log, always on, bounded, and free of the developer's code.
+
+**Where.** The Brain: `$XDG_STATE_HOME/ij-nvim-bridge/brain-<project>.log` (default `~/.local/state/ij-nvim-bridge/`). The Editor: `stdpath('state')/ij-bridge.log` (`~/.local/state/nvim/ij-bridge.log`). Each is rotated at 5 MB, keeping three old files (`.1` to `.3`), and is readable by its owner only.
+
+**Format.** One JSON object per line: `t` (ISO time with milliseconds and zone), `lvl` (`debug`, `info`, `warn`, `error`), `ev` (the event), `sess` (the Session), and the event's own fields. `jq` is the intended reader, for example `jq -c 'select(.lvl=="warn" or .lvl=="error")' brain-*.log`.
+
+**Session ids join the two.** The Brain gives each Session a short id and says it at `initialize` (`serverInfo.session`, with `serverInfo.log`, the path of its log). The Editor prints it in its `session` event; the Brain prints it as `sess` on every line about that Session. A slow completion seen in Neovim is found in the Brain's log by the id and the request's `id`.
+
+**Levels.** `info`: the Brain's life (start, with versions and where it runs; Sessions opening and closing, and why; state changes: Indexing, Ready), every failure with its type and stack, and any reply slower than 250 ms. `debug` (the default): every message in and out, summarised: method, request id, the file (`uri`), the version, the number of changes, the position, how long the reply took, its size and item count, its error code and message. `trace`: as `debug`, plus the parameters and results, truncated to 2000 characters. **`trace` contains code**, so it is opt-in and never the default: no text of a buffer is written at any other level (tests assert it). `off` writes nothing.
+
+**Setting it.** The environment variable `IJ_NVIM_BRIDGE_LOG` (`off|info|debug|trace`) when the IDE or Neovim starts, or `:IjBridge loglevel <level>`, which sets the Editor's and asks the Brain to match (`$/ij/log`; the Editor's own log has no `trace`, since it has no payloads to add).
+
+**Editor commands.** `:IjBridge log` opens the Editor's log; `:IjBridge brainlog` the Brain's; `:IjBridge report` gathers what a bug report needs into one scratch buffer: versions, the state of the Bridge (attached buffers, Sessions, offline roots, the Brain's last state), the recent connection events and the last 60 lines of each log. Neovim's own `vim.lsp` log (`:lua vim.print(vim.lsp.log.get_filename())`) is separate and records payloads at its `debug` level.
+
+**What is deliberately not there.** Any part of a buffer, a completion item's text, an edit's replacement text, a symbol query, a file's contents: identifiers and paths appear (they name what was asked about), code does not.
 
 ## 14. Open
 

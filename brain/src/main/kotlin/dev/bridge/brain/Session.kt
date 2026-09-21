@@ -26,10 +26,17 @@ import java.util.UUID
 class Session(private val conn: SocketChannel, private val brain: BrainService) {
 
     private val log = logger<Session>()
-    private val transport = Transport(Channels.newOutputStream(conn))
+
+    /** Short and per connection: printed by the Editor too, so a line in each log can be matched. */
+    private val id = UUID.randomUUID().toString().take(6)
+    private val transport = Transport(Channels.newOutputStream(conn), id, brain.record)
+    private var count = 0L
 
     fun run() {
         brain.register(transport)
+        val opened = System.nanoTime()
+        brain.record.info(id, "session_open")
+        var why = "closed by the Editor"
         try {
             conn.use {
                 val input = Channels.newInputStream(conn)
@@ -41,7 +48,16 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     if (!handle(message, received)) return
                 }
             }
+        } catch (t: Throwable) {
+            why = "${t::class.java.simpleName}: ${t.message}"
+            brain.record.error(id, "session read loop", t)
+            throw t
         } finally {
+            brain.record.info(id, "session_close") {
+                put("why", why)
+                put("messages", count)
+                put("seconds", (System.nanoTime() - opened) / 1_000_000_000)
+            }
             brain.unregister(transport)
             // The editor is gone, cleanly or not: its claims go with it.
             brain.mirrors.dropOwner(this).forEach { brain.diagnostics.clear(it) }
@@ -50,15 +66,22 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
     }
 
     /** False ends the session. */
-    private fun handle(message: JsonObject, received: Long): Boolean {
+    private fun handle(message: JsonObject, arrived: Long): Boolean {
         val method = message["method"]?.jsonPrimitive?.contentOrNull ?: return true
         val id = message["id"]
         val params = message["params"] as? JsonObject ?: buildJsonObject {}
+        count++
+        transport.begin(id, method, arrived)
+        recordArrival(method, id, params)
         try {
             when (method) {
                 "initialize" -> reply(id, buildJsonObject {
                     put("capabilities", brain.capabilities())
-                    put("serverInfo", buildJsonObject { put("name", "ij-nvim-bridge"); put("version", "0.1.0") })
+                    put("serverInfo", buildJsonObject {
+                        put("name", "ij-nvim-bridge"); put("version", "0.1.0")
+                        put("session", this@Session.id)
+                        brain.record.path?.let { put("log", it.toString()) }
+                    })
                 })
                 // Tell this Editor where the Brain stands, so it never has to ask.
                 "initialized" -> transport.send(Wire.notification("\$/ij/status", brain.status().toJson()))
@@ -120,10 +143,12 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                         streamId = UUID.randomUUID().toString().take(8),
                         lateWaitMs = params["lateWaitMs"]?.jsonPrimitive?.intOrNull?.toLong()
                             ?: 10_000L,
-                        received = received, transport = transport,
+                        received = arrived, transport = transport,
                         mirror = { brain.mirrors.get(uri) },
                     ))
                 }
+                "workspace/didRenameFiles", "workspace/didCreateFiles", "workspace/didDeleteFiles" ->
+                    brain.refreshFiles(async = true)
                 "\$/ij/completionCancel" -> brain.completion.cancel(params.str("streamId"))
                 "\$/ij/debug/state" -> reply(id, debugState(params))
                 "\$/ij/debug/saveAll" -> {
@@ -138,6 +163,18 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 "\$/ij/debug/navigationDelay" -> {
                     DebugLevers.navigationDelayMs = params.int("ms").toLong()
                     reply(id, JsonNull)
+                }
+                // The log's level, and where it is: for the Editor's `:IjBridge log`, and the harness.
+                "\$/ij/log" -> {
+                    params["level"]?.jsonPrimitive?.contentOrNull?.let { name ->
+                        BridgeLog.parse(name)?.let { brain.record.level = it }
+                    }
+                    params["maxBytes"]?.jsonPrimitive?.intOrNull?.let { brain.record.maxBytes = it.toLong() }
+                    reply(id, buildJsonObject {
+                        put("level", brain.record.level.name.lowercase())
+                        brain.record.path?.let { put("path", it.toString()) }
+                        put("session", this@Session.id)
+                    })
                 }
                 "\$/ij/debug/refresh" -> {
                     brain.refreshFiles()
@@ -158,6 +195,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             }
         } catch (t: Throwable) {
             log.warn("bridge: $method failed", t)
+            brain.record.error(this.id, method, t)
             // A visible failure beats a stall: a throwing handler must not
             // leave the client waiting for a reply that never comes.
             if (id != null) {
@@ -165,6 +203,27 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             }
         }
         return true
+    }
+
+    /** What arrived, in a line: which message, about what, never its text. */
+    private fun recordArrival(method: String, id: JsonElement?, params: JsonObject) {
+        if (!brain.record.enabled(BridgeLog.Level.DEBUG)) return
+        brain.record.debug(this.id, "recv") {
+            put("method", method)
+            if (id != null) put("id", id)
+            val doc = params["textDocument"] as? JsonObject
+            (doc?.get("uri") ?: (params["data"] as? JsonObject)?.get("uri"))?.let { put("uri", it) }
+            doc?.get("version")?.let { put("version", it) }
+            (params["contentChanges"] as? JsonArray)?.let { put("changes", it.size) }
+            (doc?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.let { put("length", it.content.length) }
+            (params["position"] as? JsonObject)?.let { p ->
+                put("at", "${p["line"]}:${p["character"]}")
+            }
+            params["query"]?.let { put("query", it) }
+            params["newName"]?.let { put("newName", it) }
+            (params["files"] as? JsonArray)?.let { put("files", it.size) }
+            brain.record.payload(params)?.let { put("params", it) }
+        }
     }
 
     private fun reply(id: JsonElement?, result: JsonElement) {

@@ -40,6 +40,9 @@ class BrainService(private val project: Project) : Disposable {
 
     private val log = logger<BrainService>()
     private val stopped = AtomicBoolean(false)
+
+    /** What happened, for finding out why (BridgeLog). Named after the project, so several IDE windows keep apart. */
+    val record: BridgeLog = BridgeLog.forProject(hash(project.basePath ?: project.name))
     private var server: ServerSocketChannel? = null
     private var socketPath: Path? = null
     private var root: String? = null
@@ -51,7 +54,7 @@ class BrainService(private val project: Project) : Disposable {
     val completionRequests = java.util.concurrent.atomic.AtomicInteger()
 
     val mirrors = MirrorSet(project).also { Disposer.register(this, it) }
-    val completion = CompletionEngine(project).also { Disposer.register(this, it) }
+    val completion = CompletionEngine(project, record).also { Disposer.register(this, it) }
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
 
@@ -88,6 +91,15 @@ class BrainService(private val project: Project) : Disposable {
         server = channel
         socketPath = path
         Registry.publish(root, sockName, ide())
+        record.info(null, "brain_start") {
+            put("root", root)
+            put("socket", path.toString())
+            put("ide", ide())
+            put("plugin", "0.1.0")
+            put("java", System.getProperty("java.version") ?: "?")
+            put("os", "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")
+            put("level", record.level.name.lowercase())
+        }
         watchStatus()
         log.info("bridge: serving $root on $path")
 
@@ -153,10 +165,15 @@ class BrainService(private val project: Project) : Disposable {
                 if (now == last) return@scheduleWithFixedDelay
                 val before = last
                 last = now
+                record.info(null, "status") {
+                    put("state", now.state)
+                    now.reason?.let { put("reason", it) }
+                }
                 broadcast(Wire.notification("\$/ij/status", now.toJson()))
                 if (now.state == "Ready" && before != null) diagnostics.republishAll()
             } catch (t: Throwable) {
                 log.warn("bridge: status check failed", t)
+                record.error(null, "status check", t)
             }
         }, 0, 400, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
@@ -165,11 +182,15 @@ class BrainService(private val project: Project) : Disposable {
         Thread(r, "bridge-status").apply { isDaemon = true }
     }
 
-    /** Harness only: pick up files created on disk behind the IDE's back. */
-    fun refreshFiles() {
+    /**
+     * Pick up files created, moved or deleted on disk behind the IDE's back: an IDE that is
+     * not the active application does not look by itself, and the Editor writes the files.
+     * Asynchronous unless the caller (the harness) needs to know it is done.
+     */
+    fun refreshFiles(async: Boolean = false) {
         val root = project.basePath ?: return
         com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByPath(root)?.let {
-            com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, it)
+            com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(async, true, true, it)
         }
     }
 
@@ -213,6 +234,19 @@ class BrainService(private val project: Project) : Disposable {
             put("resolveProvider", true) // titles now, edits on resolve (FEATURES.md D3)
         })
         put("renameProvider", buildJsonObject { put("prepareProvider", true) })
+        put("workspace", buildJsonObject {
+            put("fileOperations", buildJsonObject {
+                val filters = kotlinx.serialization.json.JsonArray(listOf(buildJsonObject {
+                    put("scheme", "file")
+                    put("pattern", buildJsonObject { put("glob", "**/*.{kt,java}"); put("matches", "file") })
+                }))
+                // Asked before a move, to say what else changes; told after, so the IDE looks at the disk.
+                put("willRename", buildJsonObject { put("filters", filters) })
+                put("didRename", buildJsonObject { put("filters", filters) })
+                put("didCreate", buildJsonObject { put("filters", filters) })
+                put("didDelete", buildJsonObject { put("filters", filters) })
+            })
+        })
         put("documentFormattingProvider", true)
         put("documentRangeFormattingProvider", true)
         put("signatureHelpProvider", buildJsonObject {

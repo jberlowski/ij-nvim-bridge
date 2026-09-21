@@ -382,7 +382,9 @@ class TestIncrementalCompletion:
         assert probe.debug_state()["completionRequests"] == asked, (
             f"{took:.1f}s since the first answer was cached (the cache keeps answers for 5 s)", stats(nvim),
             f"status events {status_seen} -> {nvim.exec_lua('return require(\'ij_bridge\').status_events')}",
-            nvim.exec_lua("return require('ij_bridge').states"))
+            nvim.exec_lua("return require('ij_bridge').states"),
+            [l for l in nvim.exec_lua("return vim.fn.readfile(require('ij_bridge.log').path)")[-60:]
+             if "completion_" in l])
         assert back["count"] == first["count"], "the earlier answer, whole, not a subset"
         assert back["found"]["computeMetricNumber000"]
 
