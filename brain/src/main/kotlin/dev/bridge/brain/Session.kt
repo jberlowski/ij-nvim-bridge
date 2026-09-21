@@ -186,6 +186,12 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     }
                     reply(id, JsonNull)
                 }
+                // Gradle tasks (FEATURES.md §6d): the tasks IntelliJ has imported, run through its own Gradle integration.
+                "\$/ij/tasks" -> reply(id, com.intellij.openapi.application.ReadAction.compute<JsonElement, RuntimeException> {
+                    brain.gradle.list()
+                })
+                "\$/ij/task/run" -> reply(id, brain.gradle.run(params, transport))
+                "\$/ij/task/cancel" -> reply(id, brain.gradle.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
                 "\$/ij/debug/refresh" -> {
                     brain.refreshFiles()
                     reply(id, JsonNull)
@@ -203,6 +209,9 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     transport.send(Wire.error(id, RpcError.METHOD_NOT_FOUND, "unknown method: $method"))
                 }
             }
+        } catch (e: Rename.Refused) {
+            // Asked for what cannot be done, and why: the client's mistake or state, not a failure of the Brain.
+            if (id != null) transport.send(Wire.error(id, RpcError.INVALID_PARAMS, e.message ?: "refused"))
         } catch (t: Throwable) {
             log.warn("bridge: $method failed", t)
             brain.record.error(this.id, method, t)

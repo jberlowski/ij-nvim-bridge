@@ -141,6 +141,12 @@ local function connect(buf, entry)
       ['$/ij/completionItems'] = function(err, params)
         require('ij_bridge.blink').on_items(err, params)
       end,
+      ['$/ij/task/output'] = function(_, params)
+        require('ij_bridge.tasks').on_output(params)
+      end,
+      ['$/ij/task/finished'] = function(_, params)
+        require('ij_bridge.tasks').on_finished(params)
+      end,
       ['$/ij/status'] = function(_, params, ctx)
         if params then
           require('ij_bridge').on_status(ctx.client_id, params)
@@ -653,6 +659,14 @@ function M.setup(opts)
       M.set_log_level(rest)
     elseif sub == 'report' then
       M.report()
+    elseif sub == 'tasks' then
+      require('ij_bridge.tasks').tree()
+    elseif sub == 'task' then
+      require('ij_bridge.tasks').pick()
+    elseif sub == 'taskstop' then
+      require('ij_bridge.tasks').stop()
+    elseif sub == 'taskrepeat' then
+      require('ij_bridge.tasks').repeat_last()
     elseif sub == 'open' then
       M.open_ide(rest ~= '' and rest or nil)
     elseif sub == 'new' then
@@ -660,12 +674,12 @@ function M.setup(opts)
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], open [dir], keys)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], open [dir], keys, tasks, task, taskstop, taskrepeat)')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'report', 'new', 'keys' }
+      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'report', 'new', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })

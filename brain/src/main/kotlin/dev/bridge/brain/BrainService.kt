@@ -57,6 +57,7 @@ class BrainService(private val project: Project) : Disposable {
     val completion = CompletionEngine(project, record).also { Disposer.register(this, it) }
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
+    val gradle = GradleTasks(project, this)
     val inlayHints = InlayHints(project, this).also {
         Disposer.register(this, it)
         mirrors.onOpened = { m -> it.watch(m) }
@@ -240,6 +241,7 @@ class BrainService(private val project: Project) : Disposable {
         })
         put("renameProvider", buildJsonObject { put("prepareProvider", true) })
         put("inlayHintProvider", buildJsonObject { put("resolveProvider", false) })
+        put("tasks", buildJsonObject { put("gradle", true) })
         put("workspace", buildJsonObject {
             put("fileOperations", buildJsonObject {
                 val filters = kotlinx.serialization.json.JsonArray(listOf(buildJsonObject {

@@ -291,6 +291,10 @@ The lifecycle tests' Neovim never completes anything, but blink.cmp still fetche
 
 The module runs last (`pytest_collection_modifyitems`), since the second project then stays open in the IDE.
 
+### LazyVim animates the cursor
+
+`snacks.scroll` animates a large cursor jump through the rows in between: setting `window.cursor` and pressing a key straight after acts on a row the cursor has not reached (a test pressed Enter on `help` and ran `assemble`; the readings came 2, 4, 29). The harness sets `vim.g.snacks_animate = false` and disables `Snacks.scroll`. A person pressing keys is unaffected.
+
 ## 14. Open
 
 - **blink.cmp's binary is not baked into the image.** It downloads at first use in every container, so the harness needs network and the `nvim_session` fixture waits for it. Baking it into the image (`nvim --headless` with blink loaded, at build time) would remove the network dependency and about a minute per run.

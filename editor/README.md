@@ -33,6 +33,10 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 
 | Section | Key | Does | Where it exists |
 |---|---|---|---|
+| code | `<leader>cg` | **Gradle: find a task and run it** (fuzzy: `eas`, `fMT` or `trea` find `findMysteriousTreasure`) | Kotlin, Java and Groovy buffers with an IntelliJ connection |
+| | `<leader>cG` | Gradle: the tasks as a hierarchy (project, group, task) | same |
+| | `<leader>cb` | Gradle: run the last task again | same |
+| | `<leader>cB` | Gradle: stop the running task | same |
 | file/find | `<leader>fN` | New file from an IntelliJ template (asks kind and name); `fn` is LazyVim's own New File | Kotlin and Java buffers **with an IntelliJ connection** |
 | miscellaneous | `<leader>ai` | State of this buffer (attached, indexing, ...) | everywhere |
 | | `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | everywhere (it is how to get a connection) |
@@ -52,6 +56,10 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
   config = function(_, opts) require('ij_bridge').setup(opts) end,
 }
 ```
+
+### Gradle tasks
+
+IntelliJ already knows the project's Gradle tasks; the Bridge lists them without running anything and runs one through IntelliJ's own Gradle integration (the project's settings, JVM and wrapper). `<leader>cg` (or `:IjBridge task`) opens a fuzzy finder: type any letters of the name in order (`eas`, `fMT` for the capitals of `findMysteriousTreasure`, `trea`), move with `<C-n>`/`<C-p>`, `<CR>` runs it. `<leader>cG` (`:IjBridge tasks`) shows the hierarchy, project then group then task, with descriptions; `<Tab>` folds, `<CR>` runs, `a` runs with arguments, `/` opens the finder. The output streams into a buffer at the bottom without taking your window, and ends with `✔ finished`, `✘ failed` or `■ cancelled`. `<leader>cb` runs the last again and `<leader>cB` stops the running one. One task runs at a time.
 
 ### Several projects, several Neovims, starting IntelliJ
 

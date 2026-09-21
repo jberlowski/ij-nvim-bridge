@@ -1,5 +1,6 @@
 """Key bindings (FEATURES.md §9): what is not a standard LSP feature is bound where LazyVim would look for it.
 
+  <leader>c  code            Gradle tasks: find and run (cg), the hierarchy (cG), repeat (cb), stop (cB)
   <leader>f  file/find       new file from an IntelliJ template (fN)
   <leader>a  miscellaneous   state, open the project, keys, logs
 
@@ -34,6 +35,10 @@ MISC = {
     "lv": "Set the log level",
 }
 SECTIONS = {
+    "<leader>cg": "Gradle: find a task and run it",
+    "<leader>cG": "Gradle: the tasks as a hierarchy",
+    "<leader>cb": "Gradle: run the last task again",
+    "<leader>cB": "Gradle: stop the running task",
     "<leader>fN": "New file from an IntelliJ template",
 }
 
@@ -122,6 +127,15 @@ class TestMiscellaneous:
         nvim.command("edit /tmp/not-a-project-at-all.txt")
         assert here(nvim) == {}
         assert mapping(nvim, "<leader>fn").get("desc") == "New File"
+
+    def test_the_gradle_keys_are_free_in_lazyvim_and_its_extras(self, nvim, bridge_container):
+        """`cg cG cb cB`: read from LazyVim's core and extras, none of them is used there."""
+        out = bridge_container.exec(
+            "grep -rhoE '\"<leader>c[a-zA-Z]\"' ~/.local/share/nvim/lazy/LazyVim/lua/lazyvim | sort -u").stdout
+        used = {k.strip('"')[len("<leader>"):] for k in out.split()}
+        assert used, "the grep found nothing"
+        for lhs in ("cg", "cG", "cb", "cB"):
+            assert lhs not in used, f"<leader>{lhs} is used by LazyVim itself: {sorted(used)}"
 
 
 class TestOnlyWhereIntelliJIs:

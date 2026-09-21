@@ -3,6 +3,7 @@
 -- Standard features stay on the editor's own keys (`gd`, `grr`, `gI`, `<leader>ca`, `<leader>cr`,
 -- `<leader>cf`, ...): they are ordinary LSP. What is left goes where LazyVim would look for it, by section:
 --
+--   <leader>c   code           Gradle tasks: find and run (`cg`), the hierarchy (`cG`), run the last again (`cb`), stop (`cB`)
 --   <leader>f   file/find      new file from an IntelliJ template (`fN`; `fn` is LazyVim's own New File)
 --   <leader>a   miscellaneous  state, opening the project, the keys, the logs
 --
@@ -34,6 +35,9 @@ M.defaults = { prefix = '<leader>a', keys = true, sections = true }
 
 --- The filetypes IntelliJ serves. Java and Kotlin, including Gradle's Kotlin scripts (filetype `kotlin`).
 M.jvm = { 'kotlin', 'java' }
+
+--- Where Gradle tasks make sense: the languages of a Gradle project, and Groovy build scripts.
+M.gradle = { 'kotlin', 'java', 'groovy' }
 
 --- The miscellaneous keys' lhs actually bound, by suffix: for tests and `:IjBridge keys`.
 M.bound = {}
@@ -67,6 +71,15 @@ local function actions()
         end)
       end,
     },
+    -- code: Gradle tasks
+    { lhs = '<leader>cg', desc = 'Gradle: find a task and run it', run = function() require('ij_bridge.tasks').pick() end,
+      when = 'connected', ft = M.gradle },
+    { lhs = '<leader>cG', desc = 'Gradle: the tasks as a hierarchy', run = function() require('ij_bridge.tasks').tree() end,
+      when = 'connected', ft = M.gradle },
+    { lhs = '<leader>cb', desc = 'Gradle: run the last task again', run = function() require('ij_bridge.tasks').repeat_last() end,
+      when = 'connected', ft = M.gradle },
+    { lhs = '<leader>cB', desc = 'Gradle: stop the running task', run = function() require('ij_bridge.tasks').stop() end,
+      when = 'connected', ft = M.gradle },
     -- file
     { lhs = '<leader>fN', desc = 'New file from an IntelliJ template', run = function() bridge().new_file_interactive() end,
       when = 'connected', ft = M.jvm },

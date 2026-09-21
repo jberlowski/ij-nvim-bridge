@@ -314,6 +314,11 @@ def start_nvim(container, wait_for_blink: bool = True, slot: int = 1):
     from harness.util import wait_until
     wait_until(lambda: nv.exec_lua("return (pcall(require, 'blink.cmp'))"), timeout=120,
                message="blink.cmp never became loadable")
+    # LazyVim animates a large cursor jump through the rows in between (snacks.scroll), so a test that sets the cursor
+    # and presses a key at once acts on a row it has not reached yet. Nothing a person does is affected.
+    nv.exec_lua("""
+        vim.g.snacks_animate = false
+        pcall(function() Snacks.scroll.disable() end)""")
     nv.exec_lua(f"""
         vim.opt.rtp:prepend('{EDITOR_GUEST}')
         require('ij_bridge').setup()
