@@ -201,3 +201,24 @@ class TestDisconnect:
         start_ide(life)
         nv.command("edit! " + PRODUCER)             # the next BufEnter after the IDE returns
         wait_until(lambda: attached(nv) == 1, timeout=30, message="never attached once the IDE returned")
+
+
+class TestOpenWithNoIdeRunning:
+    """`:IjBridge open` when no IntelliJ is running at all: it starts one (detached: `idea` holds its
+    terminal, and must neither lock Neovim's nor die with it), and the buffer, unsaved edits and all,
+    reaches the new Brain."""
+
+    def test_the_command_starts_a_stopped_ide_and_the_unsaved_buffer_reaches_it(self, life, nv):
+        life.c.exec("ln -sf /opt/idea/bin/idea /usr/local/bin/idea", user="root")      # `idea` on the PATH
+        open_and_edit(nv, life, "// unsaved, and the IDE dies")
+        old = brain_pid(life)
+        stop_ide(life)
+        wait_until(lambda: statusline(nv) == "IJ: disconnected", timeout=60)
+
+        nv.command("IjBridge open")
+        assert statusline(nv) in ("IJ: disconnected", "IJ: starting"), statusline(nv)
+        wait_until(lambda: brain_pid(life) not in (None, old), timeout=300, interval=2,
+                   message="no new Brain appeared: " + nv.exec_lua("return vim.inspect(require('ij_bridge').events)"))
+        wait_until(lambda: "unsaved, and the IDE dies" in mirrors(life).get("CrossFileProducer.kt", {}).get("text", ""),
+                   timeout=120, interval=2, message="the unsaved buffer never reached the new Brain")
+        assert not nv.exec_lua("return next(require('ij_bridge').starting) ~= nil"), "still waiting for an IDE that is there"

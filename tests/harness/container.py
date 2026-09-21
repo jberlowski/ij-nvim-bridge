@@ -33,6 +33,8 @@ class Container:
     novnc_port: int
     nvim_port: int = 7777
     brain_port: int = 7878
+    #: a second Neovim's control port on the host, or 0 for none (several Neovims in one container)
+    nvim2_port: int = 0
 
     # ---------------------------------------------------------------- lifecycle
     @classmethod
@@ -42,6 +44,7 @@ class Container:
         novnc_port: int = 6080,
         nvim_port: int = 7777,
         brain_port: int = 7878,
+        nvim2_port: int = 0,
         mounts: dict[str, str] | None = None,
         memory: str = "6g",
     ) -> "Container":
@@ -54,6 +57,7 @@ class Container:
             # Bridge transport (see harness/brain.py).
             "-p", f"{nvim_port}:7777",
             "-p", f"{brain_port}:7878",
+            *(["-p", f"{nvim2_port}:7778"] if nvim2_port else []),
             "--memory", memory,
             # IntelliJ's VFS uses inotify watchers; the default container limit
             # is low enough to matter on a Gradle project (HARNESS.md §12).
@@ -67,6 +71,7 @@ class Container:
         c = cls(name=name, novnc_port=novnc_port)
         c.nvim_port = nvim_port
         c.brain_port = brain_port
+        c.nvim2_port = nvim2_port
         c.await_display()
         return c
 

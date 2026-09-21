@@ -29,28 +29,33 @@ nothing and prints nothing. `:IjBridge` says which state a buffer is in.
 
 ### Keys (LazyVim)
 
-Everything the Bridge adds that is **not** a standard LSP feature is bound under one prefix, **`<leader>i`** (for IntelliJ). Standard features stay on LazyVim's own keys (`gd`, `grr`, `<leader>ca`, `<leader>cr`, `<leader>cf`, `K`, ...); which-key shows the `IntelliJ` group when you press `<leader>i` and wait.
+Everything the Bridge adds that is **not** a standard LSP feature is bound under one prefix, **`<leader>a`**, so it is all together. Standard features stay on LazyVim's own keys (`gd`, `grr`, `<leader>ca`, `<leader>cr`, `<leader>cf`, `K`, ...); which-key shows the group when you press `<leader>a` and wait, and each entry is described "IntelliJ: ...".
 
 | Key | Does | Same as |
 |---|---|---|
-| `<leader>is` | State of this buffer (attached, indexing, ...) | `:IjBridge` |
-| `<leader>in` | New file from an IntelliJ template (asks kind and name) | `:IjBridge new` |
-| `<leader>ill` | Open the Editor log | `:IjBridge log` |
-| `<leader>ilb` | Open the Brain log | `:IjBridge brainlog` |
-| `<leader>ilr` | Gather a bug report into one buffer | `:IjBridge report` |
-| `<leader>ilv` | Set the log level | `:IjBridge loglevel` |
+| `<leader>ai` | State of this buffer (attached, indexing, ...) | `:IjBridge` |
+| `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | `:IjBridge open` |
+| `<leader>ag` | New file from an IntelliJ template (asks kind and name) | `:IjBridge new` |
+| `<leader>all` | Open the Editor log | `:IjBridge log` |
+| `<leader>alb` | Open the Brain log | `:IjBridge brainlog` |
+| `<leader>alr` | Gather a bug report into one buffer | `:IjBridge report` |
+| `<leader>alv` | Set the log level | `:IjBridge loglevel` |
 
-`:IjBridge keys` lists what is bound. **Why `i`:** LazyVim's AI extras (Claude Code, Avante, Copilot Chat, Sidekick) all claim `<leader>a` as "+ai" and use `aa`, `ac`, `an`, `as`; across LazyVim's core and every extra the letters `i`, `j`, `k`, `v`, `y` and `z` are never used. An existing mapping is never overwritten (it is skipped, and the log says so); if the prefix itself is already mapped, nothing is bound.
+`:IjBridge keys` lists what is bound. **LazyVim's AI extras (Claude Code, Avante, Copilot Chat, Sidekick) share the `<leader>a` prefix** as "+ai", with `C a b c d e f h m n p q r s t v x` under it. The keys above are ones they do not use (`g i j k l o u w y z` are free), and the test suite reads LazyVim's extras and fails if one ever collides. An empty mapping on the prefix, which is how they name their group, does not block the Bridge's keys; an existing mapping is never overwritten (it is skipped, and the log says so), and if the prefix itself does something, nothing is bound. Change it with `prefix = ...`.
 
 ```lua
 -- lazy.nvim, LazyVim
 {
   dir = '/path/to/ij-nvim-bridge/editor',
   event = 'VeryLazy',
-  opts = { prefix = '<leader>i', keys = true },   -- the defaults; keys = false binds nothing
+  opts = { prefix = '<leader>a', keys = true },   -- the defaults; keys = false binds nothing
   config = function(_, opts) require('ij_bridge').setup(opts) end,
 }
 ```
+
+### Several projects, several Neovims, starting IntelliJ
+
+Each buffer is served by the IntelliJ that has *its* project open: with two projects open (a second `idea <root>` opens it in the running IDE), one Neovim holds a Session for each and every buffer goes to its own. Several Neovims may share one IDE; closing one releases only what it had open. `:IjBridge open` (`<leader>ao`) starts the IDE for the current buffer's project when none serves it: it runs `idea <root>` (on your `PATH`; `setup{ idea_cmd = '/path/to/idea' }` otherwise) detached, so it never locks Neovim's terminal and outlives Neovim, shows `IJ: starting` until the project's Brain appears, and then attaches. It is never started by itself.
 
 ### New files and moving files
 

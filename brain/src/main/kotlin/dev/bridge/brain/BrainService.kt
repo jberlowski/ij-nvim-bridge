@@ -265,6 +265,9 @@ class BrainService(private val project: Project) : Disposable {
         put("ij", buildJsonObject { put("ide", ide()) })
     }
 
+    /** The Project Root this Brain serves. */
+    fun projectRoot(): String? = root
+
     fun projectName(): String = project.name
 
     /** Harness only (SPEC.md §10): is IntelliJ still showing a completion popup? */

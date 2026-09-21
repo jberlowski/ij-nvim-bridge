@@ -282,6 +282,15 @@ Found by the gold-standard test failing in about half of full runs: `require('bl
 
 The lifecycle tests' Neovim never completes anything, but blink.cmp still fetched its binary on the first insert, and a failed download (`curl: (22)`) put an error in `v:errmsg`, which those tests assert is empty. It now uses blink's Lua fuzzy matcher with downloads off.
 
+### Two projects, two Neovims, and a modal dialog nobody answers
+
+`test_multi.py` needs a second Neovim (`Editor(slot=2)`, control port 7778 in the container, mapped by `Container.start(nvim2_port=...)`, closable with `Editor.close()`) and a second project (a copy of the fixture at `/work/fixture2`, opened by the Editor's own `:IjBridge open`, with `idea` symlinked onto the `PATH`). Two things bit:
+
+- `idea <another project>` in a running IDE asks "this window or a new one?" unless its setting says. A first attempt wrote the setting to `options/ide.general.xml`, and the IDE then treated the config as an existing user's and showed a *modal* "Meet the Islands Theme" dialog, which held the EDT: every Brain request timed out, and the fixture reported "Brain not ready within 900s". A thread dump showed `Dialog.show` under the EDT. The setting is now applied at run time (`$/ij/debug/openInNewWindow`). **A stuck Brain with a rendered IDE is a modal dialog: dump the threads (`kill -3`) and look at the EDT.**
+- Gradle renames a freshly imported project after its root project (`spring-kotlin-mvc`), while the first, image-baked one keeps `fixture`: tests identify a Brain by its root path.
+
+The module runs last (`pytest_collection_modifyitems`), since the second project then stays open in the IDE.
+
 ## 14. Open
 
 - **blink.cmp's binary is not baked into the image.** It downloads at first use in every container, so the harness needs network and the `nvim_session` fixture waits for it. Baking it into the image (`nvim --headless` with blink loaded, at build time) would remove the network dependency and about a minute per run.

@@ -176,6 +176,16 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                         put("session", this@Session.id)
                     })
                 }
+                "\$/ij/debug/openInNewWindow" -> {
+                    // Harness only. `idea <another project>` in a running IDE asks "this window or a new one?"
+                    // unless told, and a modal question nobody answers blocks the IDE (and this Brain). A developer
+                    // with two projects has answered it once; this answers it the same way, for the run.
+                    edt {
+                        com.intellij.ide.GeneralSettings.getInstance().confirmOpenNewProject =
+                            com.intellij.ide.GeneralSettings.OPEN_PROJECT_NEW_WINDOW
+                    }
+                    reply(id, JsonNull)
+                }
                 "\$/ij/debug/refresh" -> {
                     brain.refreshFiles()
                     reply(id, JsonNull)
@@ -235,6 +245,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
         val withText = params["text"]?.jsonPrimitive?.contentOrNull == "true"
         return buildJsonObject {
             put("project", brain.projectName())
+            brain.projectRoot()?.let { put("root", it) }
             put("capabilities", brain.capabilities())
             brain.status().let {
                 put("state", it.state)

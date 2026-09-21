@@ -48,7 +48,8 @@ def pytest_collection_modifyitems(items):
     IDE), then everything that shares the Bridge's IDE. Stable: order within a module holds."""
     def group(item):
         name = item.module.__name__.rsplit(".", 1)[-1]
-        return {"test_lifecycle": 0, "test_harness_sufficiency": 1}.get(name, 2)
+        # test_multi opens a second project in the Bridge's IDE, which then stays: it goes last.
+        return {"test_lifecycle": 0, "test_harness_sufficiency": 1, "test_multi": 3}.get(name, 2)
     items.sort(key=group)
 
 
@@ -168,7 +169,7 @@ def sync_fixture(container, brain) -> None:
 # container, on its own ports so both can be up in one pytest session.
 @pytest.fixture(scope="session")
 def bridge_container():
-    c = Container.start(novnc_port=6082, nvim_port=7779, brain_port=7880)
+    c = Container.start(novnc_port=6082, nvim_port=7779, brain_port=7880, nvim2_port=7782)
     LIVE["bridge_container"] = c
     try:
         yield c
@@ -301,13 +302,14 @@ EDITOR_DIR = REPO_ROOT / "editor"
 EDITOR_GUEST = "/home/dev/ij-nvim-bridge/editor"
 
 
-def start_nvim(container, wait_for_blink: bool = True):
-    """Neovim (LazyVim, blink.cmp) running the Editor plugin."""
+def start_nvim(container, wait_for_blink: bool = True, slot: int = 1):
+    """Neovim (LazyVim, blink.cmp) running the Editor plugin. `slot` 2 is a second Neovim in the same container."""
     c = container
     c.copy_in(EDITOR_DIR, EDITOR_GUEST)
-    e = Editor(c)
+    e = Editor(c, slot=slot)
     e.launch(cwd=FIXTURE_PROJECT)
     nv = e.attach(timeout=120)
+    nv.harness_editor = e          # so a test can close this Neovim, as a developer would
     # Neovim is listening before lazy.nvim has finished loading its plugins.
     from harness.util import wait_until
     wait_until(lambda: nv.exec_lua("return (pcall(require, 'blink.cmp'))"), timeout=120,

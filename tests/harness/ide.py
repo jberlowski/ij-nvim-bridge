@@ -49,6 +49,7 @@ class Ide:
     def trust(self, path: str = "/work") -> None:
         self.c.write_file(f"{CONFIG}/options/trusted-paths.xml", TRUSTED_PATHS)
 
+
     def install_plugin(self, host_zip: Path) -> None:
         self.c.exec(f"mkdir -p {PLUGINS}")
         self.c.exec(f"rm -rf {PLUGINS}/canary")

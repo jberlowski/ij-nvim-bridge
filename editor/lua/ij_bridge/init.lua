@@ -30,6 +30,13 @@ M.attached = {}
 --- Buffers in a Project Root whose file does not exist on disk yet: attached by their first write.
 M.unwritten = {}
 
+--- Project Roots for which an IntelliJ has been started from here and whose Brain has not appeared yet:
+--- root -> { timer }.
+M.starting = {}
+
+--- The options given to `setup`.
+M.opts = {}
+
 --- Project Roots whose Session died unexpectedly and are being retried:
 --- root -> { attempt = n }.
 M.offline = {}
@@ -77,6 +84,12 @@ end
 function M.statusline()
   local status = M.status(0)
   if not status then
+    local name = vim.api.nvim_buf_get_name(0)
+    for root in pairs(M.starting) do
+      if name == root or name:sub(1, #root + 1) == root .. '/' then
+        return 'IJ: starting'
+      end
+    end
     -- A buffer that should be Mirrored but has no Session: the Brain went away.
     local buf = vim.api.nvim_get_current_buf()
     return (M.attached[buf] and not M.client(buf)) and 'IJ: disconnected' or ''
@@ -401,6 +414,90 @@ function M.new_file_interactive(dir)
   end)
 end
 
+-- ------------------------------------------------------------ starting an IntelliJ
+-- Only when asked (`:IjBridge open`, `<leader>ao`), never by itself. The first `idea <root>` process
+-- keeps its terminal for as long as it lives, and a later `idea <root>` only asks that process to
+-- open the project (or a file), so the command is started detached and never waited for: it must not
+-- lock Neovim's terminal, and it must not die with Neovim.
+
+local ROOT_MARKERS = { '.idea', 'settings.gradle.kts', 'settings.gradle', 'pom.xml', 'build.gradle.kts', 'build.gradle', '.git' }
+
+--- The project a path belongs to: the nearest directory above it that looks like one.
+function M.project_root(path)
+  path = (path and path ~= '') and path or vim.uv.cwd()
+  local start = vim.uv.fs_stat(path) and path or vim.fs.dirname(path)
+  return vim.fs.root(start, ROOT_MARKERS)
+end
+
+local function under(name, root)
+  return name == root or name:sub(1, #root + 1) == root .. '/'
+end
+
+--- Attach every loaded buffer under `root`: an IntelliJ has just started serving it.
+local function attach_under(root)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and under(vim.api.nvim_buf_get_name(buf), root) then
+      M.attach(buf)
+    end
+  end
+end
+
+--- Start the IntelliJ that serves the project of `path` (default: this buffer), unless one does.
+--- @param path? string
+--- @param callback? fun(ok: boolean, root: string) called when it is serving, or when waiting was given up
+function M.open_ide(path, callback)
+  local root = M.project_root(path or vim.api.nvim_buf_get_name(0))
+  if not root then
+    vim.notify('ij-bridge: this does not look like a project (no .idea, Gradle, Maven or Git root above it)', vim.log.levels.WARN)
+    return
+  end
+  local serving = registry.resolve(root)
+  if serving then
+    vim.notify('ij-bridge: IntelliJ already serves ' .. serving.root)
+    attach_under(serving.root)
+    if callback then callback(true, serving.root) end
+    return
+  end
+  if M.starting[root] then
+    vim.notify('ij-bridge: IntelliJ is already starting for ' .. root)
+    return
+  end
+  local command = M.opts.idea_cmd or 'idea'
+  if vim.fn.executable(command) ~= 1 then
+    vim.notify(('ij-bridge: %s is not on the PATH (set idea_cmd in setup)'):format(command), vim.log.levels.ERROR)
+    return
+  end
+
+  -- `nohup ... &` in a shell that ends at once: the process is left to itself.
+  vim.system({ 'sh', '-c', 'nohup "$0" "$1" >/dev/null 2>&1 &', command, root }, { detach = true })
+  log.info('open_ide', { root = root, command = command })
+  vim.notify('ij-bridge: starting IntelliJ for ' .. root)
+
+  local timer = vim.uv.new_timer()
+  local waited = 0
+  M.starting[root] = { timer = timer }
+  vim.cmd.redrawstatus()
+  timer:start(1000, 1000, vim.schedule_wrap(function()
+    waited = waited + 1
+    local entry = registry.resolve(root)
+    if entry or waited >= (M.opts.open_timeout or 300) then
+      timer:stop()
+      timer:close()
+      M.starting[root] = nil
+      if entry then
+        log.info('open_ide_ready', { root = entry.root, seconds = waited })
+        vim.notify('ij-bridge: IntelliJ is serving ' .. entry.root)
+        attach_under(entry.root)
+      else
+        log.warn('open_ide_gave_up', { root = root, seconds = waited })
+        vim.notify('ij-bridge: gave up waiting for IntelliJ to serve ' .. root, vim.log.levels.WARN)
+      end
+      vim.cmd.redrawstatus()
+      if callback then callback(entry ~= nil, root) end
+    end
+  end))
+end
+
 --- What `:IjBridge` says about the current buffer.
 function M.show_status()
   local buf = vim.api.nvim_get_current_buf()
@@ -489,8 +586,9 @@ function M.report()
   return out
 end
 
---- @param opts? { prefix?: string, keys?: boolean } keys are bound under `prefix` (default `<leader>i`) unless `keys = false`
+--- @param opts? { prefix?: string, keys?: boolean, idea_cmd?: string, open_timeout?: integer } keys are bound under `prefix` (default `<leader>a`) unless `keys = false`
 function M.setup(opts)
+  M.opts = opts or {}
   local group = vim.api.nvim_create_augroup('IjBridge', { clear = true })
 
   vim.api.nvim_create_autocmd('BufEnter', {
@@ -555,17 +653,19 @@ function M.setup(opts)
       M.set_log_level(rest)
     elseif sub == 'report' then
       M.report()
+    elseif sub == 'open' then
+      M.open_ide(rest ~= '' and rest or nil)
     elseif sub == 'new' then
       M.new_file_interactive(rest)
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], keys)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], open [dir], keys)')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'log', 'brainlog', 'loglevel', 'report', 'new', 'keys' }
+      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'report', 'new', 'keys' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })
