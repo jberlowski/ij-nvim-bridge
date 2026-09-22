@@ -54,6 +54,47 @@ public class Greeted {
 }
 '''
 
+# A private declaration with zero usages: "is never used", greyed the same way as an unused
+# import or local, but - unlike them - with no code action to remove it (see TestNeverUsed).
+KOTLIN_NEVER_USED = '''package dev.bridge.fixture.probe
+
+private class Lockbox {
+    fun open() = 1
+}
+'''
+
+JAVA_NEVER_USED = '''package dev.bridge.fixture.probe;
+
+class Lockbox {
+    private int open() { return 1; }
+}
+'''
+
+# Explicit type arguments IntelliJ can infer: also greyed out (the same NOT_USED_ELEMENT_ATTRIBUTES
+# colour), and - unlike "is never used" - each has a genuine quick fix (not a refactoring).
+KOTLIN_TYPE_ARGS = '''package dev.bridge.fixture.probe
+
+class Box<T>(val value: T)
+
+fun make(): Box<String> {
+    return Box<String>("hi")
+}
+'''
+
+JAVA_TYPE_ARGS = '''package dev.bridge.fixture.probe;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class Boxes {
+    public List<String> make() {
+        List<String> list = new ArrayList<String>();
+        list.add("hi");
+        return list;
+    }
+}
+'''
+
 
 def by_message(diagnostics, needle: str) -> dict:
     """The one diagnostic whose message contains `needle`, or the first if several share the text
@@ -118,6 +159,28 @@ class TestOnTheWire:
         wire.did_change(KOTLIN, 1, {"text": used})
         published(wire, KOTLIN, lambda d: not any("Unused import" in x["message"] for x in d))
 
+    def test_kotlin_a_never_used_class_and_method_are_marked_unnecessary(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_NEVER_USED)
+        pub = published(wire, KOTLIN, lambda d: any("never used" in x["message"] for x in d))
+        assert tagged(pub["diagnostics"], 'Class "Lockbox" is never used') == [UNNECESSARY]
+        assert tagged(pub["diagnostics"], 'Function "open" is never used') == [UNNECESSARY]
+
+    def test_java_a_never_used_class_and_method_are_marked_unnecessary(self, wire):
+        wire.did_open(JAVA, JAVA_NEVER_USED)
+        pub = published(wire, JAVA, lambda d: any("never used" in x["message"] for x in d))
+        assert tagged(pub["diagnostics"], "Class 'Lockbox' is never used") == [UNNECESSARY]
+        assert tagged(pub["diagnostics"], "Private method 'open()' is never used") == [UNNECESSARY]
+
+    def test_kotlin_a_redundant_type_argument_is_marked_unnecessary(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_TYPE_ARGS)
+        pub = published(wire, KOTLIN, lambda d: any("can be inferred" in x["message"] for x in d))
+        assert tagged(pub["diagnostics"], "Explicit type arguments can be inferred") == [UNNECESSARY]
+
+    def test_java_a_redundant_type_argument_is_marked_unnecessary(self, wire):
+        wire.did_open(JAVA, JAVA_TYPE_ARGS)
+        pub = published(wire, JAVA, lambda d: any("can be replaced with <>" in x["message"] for x in d))
+        assert tagged(pub["diagnostics"], "can be replaced with <>") == [UNNECESSARY]
+
 
 class TestFixingIt:
     """The point of greying it out: there is something to do about it. IntelliJ's own quick fix
@@ -166,6 +229,65 @@ class TestFixingIt:
         resolved = wire.request("codeAction/resolve", action, timeout=90)
         out = apply_edits(JAVA_UNUSED, resolved["edit"]["changes"][uri(JAVA)])
         assert "unused" not in out, out
+
+    def test_kotlin_redundant_type_argument_has_a_remove_quick_fix(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_TYPE_ARGS)
+        published(wire, KOTLIN, lambda d: tagged(d, "Explicit type arguments can be inferred") == [UNNECESSARY])
+        action = self.offer(wire, KOTLIN, KOTLIN_TYPE_ARGS, "Box<String>(\"hi\")", 4, "Remove explicit type arguments")
+        assert action["kind"] == "quickfix"
+        resolved = wire.request("codeAction/resolve", action, timeout=90)
+        out = apply_edits(KOTLIN_TYPE_ARGS, resolved["edit"]["changes"][uri(KOTLIN)])
+        assert 'return Box("hi")' in out, out
+        assert out.count("Box<String>") == 1, "only the declared return type keeps it; the call site's is gone: " + out
+
+    def test_java_diamond_quick_fix_removes_the_redundant_type_argument(self, wire):
+        wire.did_open(JAVA, JAVA_TYPE_ARGS)
+        published(wire, JAVA, lambda d: tagged(d, "can be replaced with <>") == [UNNECESSARY])
+        action = self.offer(wire, JAVA, JAVA_TYPE_ARGS, "new ArrayList<String>()", 14, "Replace with <>")
+        assert action["kind"] == "quickfix"
+        resolved = wire.request("codeAction/resolve", action, timeout=90)
+        out = apply_edits(JAVA_TYPE_ARGS, resolved["edit"]["changes"][uri(JAVA)])
+        assert "new ArrayList<>()" in out and "new ArrayList<String>()" not in out, out
+
+
+class TestNeverUsed:
+    """"is never used" (an unused private class, method or field) is greyed out the same way as an
+    unused import or local (TestOnTheWire, above) - but, unlike them, **has no code action to remove
+    it today**. What actually removes it in IntelliJ is Safe Delete, and Safe Delete is a refactoring
+    (`SafeDeleteHandler`), not an intention: it never appears in `ShowIntentionsPass.getActionsToShow`,
+    which is what every code action in this project is built on (CodeActions.kt). Confirmed by asking
+    for code actions at the diagnostic's own range and finding no quick fix among them - only Organize
+    Imports and unrelated intentions. Safe Delete is on the roadmap (FEATURES.md, decision D2: build its
+    edits from the refactoring's own UsageInfo, "usages check first") but is not built; this class is
+    the marker for that gap, so it fails loudly, on purpose, the day someone starts implementing it -
+    at which point it should be rewritten as a TestFixingIt case, not deleted."""
+
+    def test_it_is_still_marked_unnecessary_though_nothing_can_fix_it_yet(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_NEVER_USED)
+        pub = published(wire, KOTLIN, lambda d: any("never used" in x["message"] for x in d))
+        assert tagged(pub["diagnostics"], 'Function "open" is never used') == [UNNECESSARY]
+
+    def test_no_quick_fix_removes_a_never_used_kotlin_declaration_yet(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_NEVER_USED)
+        d = published(wire, KOTLIN, lambda d: any("never used" in x["message"] for x in d))
+        never_used = by_message(d["diagnostics"], 'Function "open" is never used')
+        actions = wire.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri(KOTLIN)}, "range": never_used["range"],
+            "context": {"diagnostics": []}}, timeout=90)
+        assert not [a for a in actions if a["kind"] == "quickfix"], (
+            "a quick fix now removes a never-used declaration: promote this gap to a real feature "
+            f"(FEATURES.md, D2) and rewrite this as a TestFixingIt case - found {actions}")
+
+    def test_no_quick_fix_removes_a_never_used_java_declaration_yet(self, wire):
+        wire.did_open(JAVA, JAVA_NEVER_USED)
+        d = published(wire, JAVA, lambda d: any("never used" in x["message"] for x in d))
+        never_used = by_message(d["diagnostics"], "Private method 'open()' is never used")
+        actions = wire.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri(JAVA)}, "range": never_used["range"],
+            "context": {"diagnostics": []}}, timeout=90)
+        assert not [a for a in actions if a["kind"] == "quickfix"], (
+            "a quick fix now removes a never-used declaration: promote this gap to a real feature "
+            f"(FEATURES.md, D2) and rewrite this as a TestFixingIt case - found {actions}")
 
 
 class TestThroughNeovim:
