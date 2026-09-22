@@ -147,6 +147,18 @@ local function connect(buf, entry)
       ['$/ij/task/finished'] = function(_, params)
         require('ij_bridge.tasks').on_finished(params)
       end,
+      ['$/ij/runnables'] = function(_, params)
+        require('ij_bridge.runnables').on_runnables(params)
+      end,
+      ['$/ij/run/output'] = function(_, params)
+        require('ij_bridge.test_run').on_output(params)
+      end,
+      ['$/ij/test/status'] = function(_, params)
+        require('ij_bridge.test_run').on_status(params)
+      end,
+      ['$/ij/run/finished'] = function(_, params)
+        require('ij_bridge.test_run').on_finished(params)
+      end,
       ['$/ij/status'] = function(_, params, ctx)
         if params then
           require('ij_bridge').on_status(ctx.client_id, params)

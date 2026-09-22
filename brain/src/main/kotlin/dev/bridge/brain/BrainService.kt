@@ -58,6 +58,8 @@ class BrainService(private val project: Project) : Disposable {
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
     val gradle = GradleTasks(project, this)
+    val runnables = RunnablesPublisher(project, this).also { Disposer.register(this, it) }
+    val testRunner = TestRunner(project, this)
     val inlayHints = InlayHints(project, this).also {
         Disposer.register(this, it)
         mirrors.onOpened = { m -> it.watch(m) }
@@ -176,7 +178,10 @@ class BrainService(private val project: Project) : Disposable {
                     now.reason?.let { put("reason", it) }
                 }
                 broadcast(Wire.notification("\$/ij/status", now.toJson()))
-                if (now.state == "Ready" && before != null) diagnostics.republishAll()
+                if (now.state == "Ready" && before != null) {
+                    diagnostics.republishAll()
+                    mirrors.all().forEach { runnables.schedule(it.uri) }
+                }
             } catch (t: Throwable) {
                 log.warn("bridge: status check failed", t)
                 record.error(null, "status check", t)
@@ -243,6 +248,7 @@ class BrainService(private val project: Project) : Disposable {
         put("inlayHintProvider", buildJsonObject { put("resolveProvider", false) })
         put("tasks", buildJsonObject { put("gradle", true) })
         put("testNavigation", true) // $/ij/testTargets: an extension, LSP has no "go to test" method
+        put("testRunning", true) // $/ij/runnables, $/ij/run, $/ij/run/cancel: extensions, no LSP equivalent
         put("workspace", buildJsonObject {
             put("fileOperations", buildJsonObject {
                 val filters = kotlinx.serialization.json.JsonArray(listOf(buildJsonObject {

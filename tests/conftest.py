@@ -141,17 +141,24 @@ NEW_PROBES = [
     "src/main/kotlin/dev/bridge/fixture/probe/NoTestYetJava.java",
     "src/test/kotlin/dev/bridge/fixture/probe/CalculatorTest.kt",
     "src/test/kotlin/dev/bridge/fixture/probe/MultiplierTest.java",
+    "src/test/kotlin/dev/bridge/fixture/probe/FailingTest.kt",
+    "src/test/kotlin/dev/bridge/fixture/probe/SlowTest.kt",
 ]
 
 
 def sync_fixture(container, brain) -> None:
+    """Missing or changed since the image was baked: probe files are added after the fact often
+    enough (a NEW_PROBES entry may itself be edited later, not just added new) that this checks
+    content, not just existence."""
     from harness.util import wait_until
     from harness.wire import Wire
     added = False
     for rel in NEW_PROBES:
         guest = f"{FIXTURE_PROJECT}/{rel}"
-        if container.exec(f"test -f {guest}", check=False).returncode != 0:
-            container.write_file(guest, (REPO_ROOT / "fixture" / rel).read_text().rstrip("\n"))
+        local = (REPO_ROOT / "fixture" / rel).read_text().rstrip("\n")
+        exists = container.exec(f"test -f {guest}", check=False).returncode == 0
+        if not exists or container.read_file(guest).rstrip("\n") != local:
+            container.write_file(guest, local)
             added = True
     if not added:
         return
@@ -184,11 +191,24 @@ def bridge_container():
             c.stop()
 
 
+def sync_build_gradle(container) -> None:
+    """The image bakes fixture/build.gradle.kts at build time, same as its source: an edit since
+    then never reaches a running container the way NEW_PROBES's "if missing" check does, because
+    the file already exists. Always overwrite it with the repo's current one; a Gradle task always
+    reads the build script fresh from disk when it runs, so unlike source files this needs no
+    reimport or refresh to take effect."""
+    guest = f"{FIXTURE_PROJECT}/build.gradle.kts"
+    local = (REPO_ROOT / "fixture" / "build.gradle.kts").read_text().rstrip("\n")
+    if container.read_file(guest).rstrip("\n") != local:
+        container.write_file(guest, local)
+
+
 def start_bridge(container) -> Brain:
     """The Brain plugin, running in an IDE that has finished importing."""
     if not BRAIN_ZIP.exists():
         pytest.skip(f"brain plugin not built: {BRAIN_ZIP} (run make brain)")
     c = container
+    sync_build_gradle(c)
     ide = Ide(c)
     ide.trust()
     ide.install_plugin(BRAIN_ZIP)

@@ -42,6 +42,11 @@ SECTIONS = {
     "<leader>cB": "Gradle: stop the running task",
     "<leader>fN": "New file from an IntelliJ template",
     "<leader>tg": "Go to the test / the class under test",
+    "<leader>tn": "Run the nearest test",
+    "<leader>tc": "Run every test in this class",
+    "<leader>tf": "Run every test in this file",
+    "<leader>tR": "Run the last test again",
+    "<leader>tx": "Stop the running test",
 }
 
 
@@ -139,14 +144,16 @@ class TestMiscellaneous:
         for lhs in ("cg", "cG", "cb", "cB"):
             assert lhs not in used, f"<leader>{lhs} is used by LazyVim itself: {sorted(used)}"
 
-    def test_the_test_key_is_free_in_lazyvim_and_its_extras(self, nvim, bridge_container):
-        """`tg`: LazyVim's core has nothing at all on <leader>t, but its "test" extra (neotest) does
-        use several of that section's letters (tt, ts, ...) - read its actual set, not assumed."""
+    def test_the_test_keys_are_free_in_lazyvim_and_its_extras(self, nvim, bridge_container):
+        """`tg tn tc tf tR tx`: LazyVim's core has nothing at all on <leader>t, but its "test" extra
+        (neotest) does use several of that section's letters (tt, ts, ...) - read its actual set,
+        not assumed."""
         out = bridge_container.exec(
             "grep -rhoE '\"<leader>t[a-zA-Z]\"' ~/.local/share/nvim/lazy/LazyVim/lua/lazyvim | sort -u").stdout
         used = {k.strip('"')[len("<leader>"):] for k in out.split()}
         assert used, "the grep found nothing"
-        assert "tg" not in used, f"<leader>tg is used by LazyVim itself: {sorted(used)}"
+        for lhs in ("tg", "tn", "tc", "tf", "tR", "tx"):
+            assert lhs not in used, f"<leader>{lhs} is used by LazyVim itself: {sorted(used)}"
 
 
 class TestOnlyWhereIntelliJIs:

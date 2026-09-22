@@ -5,7 +5,7 @@
 --
 --   <leader>c   code           Gradle tasks: find and run (`cg`), the hierarchy (`cG`), run the last again (`cb`), stop (`cB`)
 --   <leader>f   file/find      new file from an IntelliJ template (`fN`; `fn` is LazyVim's own New File)
---   <leader>t   test           go to the test / the class under test, offering to create one (`tg`)
+--   <leader>t   test           go to the test (`tg`); run nearest/class/file, repeat, stop (`tn`, `tc`, `tf`, `tR`, `tx`)
 --   <leader>a   miscellaneous  state, opening the project, the keys, the logs
 --
 -- Organize imports is not here: `source.organizeImports` is a standard code action, and LazyVim already binds
@@ -86,6 +86,16 @@ local function actions()
       when = 'connected', ft = M.jvm },
     -- test
     { lhs = '<leader>tg', desc = 'Go to the test / the class under test', run = function() require('ij_bridge.test_nav').go() end,
+      when = 'connected', ft = M.jvm },
+    { lhs = '<leader>tn', desc = 'Run the nearest test', run = function() require('ij_bridge.test_run').run_nearest() end,
+      when = 'connected', ft = M.jvm },
+    { lhs = '<leader>tc', desc = 'Run every test in this class', run = function() require('ij_bridge.test_run').run_class() end,
+      when = 'connected', ft = M.jvm },
+    { lhs = '<leader>tf', desc = 'Run every test in this file', run = function() require('ij_bridge.test_run').run_file() end,
+      when = 'connected', ft = M.jvm },
+    { lhs = '<leader>tR', desc = 'Run the last test again', run = function() require('ij_bridge.test_run').repeat_last() end,
+      when = 'connected', ft = M.jvm },
+    { lhs = '<leader>tx', desc = 'Stop the running test', run = function() require('ij_bridge.test_run').cancel() end,
       when = 'connected', ft = M.jvm },
   }
 end

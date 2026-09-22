@@ -60,7 +60,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
             }
             brain.unregister(transport)
             // The editor is gone, cleanly or not: its claims go with it.
-            brain.mirrors.dropOwner(this).forEach { brain.diagnostics.clear(it) }
+            brain.mirrors.dropOwner(this).forEach { brain.diagnostics.clear(it); brain.runnables.clear(it) }
             brain.completion.cancelAllFor(transport)
         }
     }
@@ -112,7 +112,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 "textDocument/didClose" -> {
                     val uri = params.obj("textDocument").str("uri")
                     brain.mirrors.close(uri, this)
-                    if (brain.mirrors.get(uri) == null) brain.diagnostics.clear(uri)
+                    if (brain.mirrors.get(uri) == null) { brain.diagnostics.clear(uri); brain.runnables.clear(uri) }
                 }
                 in NavigationEngine.METHODS -> brain.navigation.submit(method, id, params, transport)
                 "\$/cancelRequest" -> brain.navigation.cancel(params["id"])
@@ -192,6 +192,14 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 })
                 "\$/ij/task/run" -> reply(id, brain.gradle.run(params, transport))
                 "\$/ij/task/cancel" -> reply(id, brain.gradle.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
+                // Run the test (FEATURES.md §6c): the marker's own Run action, performed for a position.
+                "\$/ij/run" -> {
+                    val uri = params.obj("textDocument").str("uri")
+                    val mirror = brain.mirrors.get(uri)
+                    if (mirror == null) transport.send(Wire.error(id, RpcError.INVALID_PARAMS, "not mirrored: $uri"))
+                    else reply(id, brain.testRunner.run(mirror, params, transport))
+                }
+                "\$/ij/run/cancel" -> reply(id, brain.testRunner.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
                 "\$/ij/debug/refresh" -> {
                     brain.refreshFiles()
                     reply(id, JsonNull)
@@ -204,7 +212,6 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     brain.setTabLimit(params.int("limit"))
                     reply(id, JsonNull)
                 }
-
                 else -> if (id != null) {
                     transport.send(Wire.error(id, RpcError.METHOD_NOT_FOUND, "unknown method: $method"))
                 }
