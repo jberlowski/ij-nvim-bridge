@@ -12,6 +12,9 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiLocalVariable
+import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.refactoring.inline.InlineLocalHandler
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -42,7 +45,8 @@ class CodeActions(private val project: Project) {
         const val GENERATE = "source.generate"
         const val QUICK_FIX = "quickfix"
         const val REWRITE = "refactor.rewrite"
-        val KINDS = listOf(ORGANIZE_IMPORTS, GENERATE, QUICK_FIX, REWRITE)
+        const val REFACTOR_INLINE = "refactor.inline"
+        val KINDS = listOf(ORGANIZE_IMPORTS, GENERATE, QUICK_FIX, REWRITE, REFACTOR_INLINE)
     }
 
     // ------------------------------------------------------------------ listing
@@ -68,6 +72,7 @@ class CodeActions(private val project: Project) {
         }
         actions += generateAt(mirror, file, params, only)
         actions += intentionsAt(mirror, params, only)
+        actions += inlineAt(mirror, file, params, only)
         return JsonArray(actions)
     }
 
@@ -103,6 +108,63 @@ class CodeActions(private val project: Project) {
             }
         }
         return out.values.toList()
+    }
+
+    /**
+     * "Inline variable" (FEATURES.md's extract/inline/move): Java only so far. `InlineLocalHandler`
+     * is not an intention - it is a refactoring handler, invoked from its own shortcut or menu, not
+     * `ShowIntentionsPass` - but reproducing against the real IDE found it is already `ModCommand`-based
+     * (`InlineLocalHandler.doInline`), so it reuses [editsOf] exactly as an intention's `ModCommand`
+     * does, needing no new edit-computation code. Kotlin's own inline (`KotlinInlinePropertyProcessor`)
+     * is the older kind that mutates PSI directly when run, and a scratch copy of it produced no
+     * change at all when tried - undocumented internal behaviour, not yet worth its own spike, so
+     * Kotlin is a known gap (D2, §5): not offered rather than silently failing.
+     */
+    private fun inlineAt(mirror: Mirror, file: PsiFile, params: JsonObject, only: List<String>?): List<JsonObject> {
+        if (!wanted(REFACTOR_INLINE, only)) return emptyList()
+        val range = params["range"]?.jsonObject ?: return emptyList()
+        val offset = MirrorSet.offset(mirror.document, range["start"]!!.jsonObject)
+        val variable = inlinableVariableAt(file, offset) ?: return emptyList()
+        return listOf(buildJsonObject {
+            put("title", "Inline variable '${variable.name}'")
+            put("kind", REFACTOR_INLINE)
+            put("data", buildJsonObject {
+                put("uri", mirror.uri)
+                put("version", mirror.version)
+                put("kind", REFACTOR_INLINE)
+                put("range", range)
+            })
+        })
+    }
+
+    /** The local variable at the offset - its declaration, or a usage - if Java's own Inline can handle it. */
+    private fun inlinableVariableAt(file: PsiFile, offset: Int): PsiLocalVariable? {
+        val at = file.findElementAt(offset) ?: return null
+        val variable = PsiTreeUtil.getParentOfType(at, PsiLocalVariable::class.java, false)
+            ?: file.findReferenceAt(offset)?.resolve() as? PsiLocalVariable
+            ?: return null
+        return variable.takeIf { runCatching { InlineLocalHandler().canInlineElement(it) }.getOrDefault(false) }
+    }
+
+    /** The offer's own `ModCommand`, read via [editsOf] exactly as an intention's is - never executed. */
+    private fun resolveInline(mirror: Mirror, action: JsonObject, data: JsonObject, version: Int?): JsonElement {
+        val range = data["range"]?.jsonObject ?: throw IllegalArgumentException("no range on the action")
+        val changes = ReadAction.compute<Map<String, List<JsonObject>>, RuntimeException> {
+            val file = PsiDocumentManager.getInstance(project).getPsiFile(mirror.document) ?: throw StaleAction()
+            val offset = MirrorSet.offset(mirror.document, range["start"]!!.jsonObject)
+            val variable = inlinableVariableAt(file, offset) ?: throw StaleAction()
+            val context = ActionContext.from(mirror.editor, file)
+            val command = InlineLocalHandler.doInline(context, variable, null, InlineLocalHandler.InlineMode.INLINE_ALL_AND_DELETE)
+            editsOf(command, mirror)
+        }
+        if (mirror.version != version && version != null) throw StaleAction()
+        return buildJsonObject {
+            put("title", action["title"] ?: JsonPrimitive("Inline variable"))
+            put("kind", action["kind"] ?: JsonPrimitive(REFACTOR_INLINE))
+            put("edit", buildJsonObject {
+                put("changes", buildJsonObject { changes.forEach { (uri, edits) -> put(uri, JsonArray(edits)) } })
+            })
+        }
     }
 
     /** What the Generate menu would offer for the class at the range: constructors, accessors, `toString`, ... */
@@ -169,6 +231,7 @@ class CodeActions(private val project: Project) {
         val kind = data["kind"]?.jsonPrimitive?.contentOrNull
         if (kind == QUICK_FIX || kind == REWRITE) return resolveIntention(mirror, action, data, version)
         if (kind != null && kind.startsWith(GENERATE)) return resolveGenerate(mirror, action, data, version)
+        if (kind == REFACTOR_INLINE) return resolveInline(mirror, action, data, version)
         val edits = when (kind) {
             ORGANIZE_IMPORTS -> organizeImports(mirror)
             else -> throw IllegalArgumentException("unknown action kind")

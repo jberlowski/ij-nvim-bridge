@@ -168,7 +168,8 @@ class TestOrganizeImports:
         from harness.wire import Wire
         with Wire(bridge.port) as w:
             caps = w.initialize()["capabilities"]
-        assert caps["codeActionProvider"]["codeActionKinds"] == [ORGANIZE, "source.generate", "quickfix", "refactor.rewrite"]
+        assert caps["codeActionProvider"]["codeActionKinds"] == \
+            [ORGANIZE, "source.generate", "quickfix", "refactor.rewrite", "refactor.inline"]
         assert caps["codeActionProvider"]["resolveProvider"] is True
 
 
