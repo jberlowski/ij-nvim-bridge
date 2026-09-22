@@ -7,6 +7,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.project.Project
@@ -127,8 +128,22 @@ class DiagnosticsPublisher(private val project: Project, private val brain: Brai
             put("source", "IntelliJ")
             // Errors from annotators carry no inspection id; inspections do.
             info.inspectionToolId?.takeIf { it.isNotBlank() }?.let { put("code", it) }
+            // LSP DiagnosticTag.Unnecessary (1): what IntelliJ shows greyed out (unused imports,
+            // unused locals, unused declarations), so clients grey it out too, as IntelliJ does.
+            if (isUnnecessary(info)) put("tags", JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive(1))))
         }
     }
+
+    /**
+     * Whether IntelliJ greys this out: [HighlightInfo.getSeverity]/[ProblemHighlightType] do not tell WEAK_WARNING
+     * apart from the greyed-out kind (an unused-import warning and an ordinary weak-warning squiggle are both just
+     * WEAK_WARNING/WARNING), so this reads the actual editor text-attributes key instead - `forcedTextAttributesKey`
+     * if the highlight sets one, else the key its own [HighlightInfoType] carries - and checks it against IntelliJ's
+     * own key for "unused" (`NOT_USED_ELEMENT_ATTRIBUTES`), the same key an unused import, unused local, unused
+     * method or unused class all render with. Confirmed against real highlights for both languages.
+     */
+    private fun isUnnecessary(info: HighlightInfo): Boolean =
+        (info.forcedTextAttributesKey ?: info.type.attributesKey) == CodeInsightColors.NOT_USED_ELEMENT_ATTRIBUTES
 
     private fun position(doc: Document, offset: Int): JsonObject {
         if (doc.textLength == 0) return buildJsonObject { put("line", 0); put("character", 0) }
