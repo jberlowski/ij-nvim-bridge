@@ -94,7 +94,7 @@ LSP has no vocabulary for these; they are `workspace/executeCommand` commands an
 
 | Feature | Surface | Notes |
 |---|---|---|
-| **Run / debug configurations** | `$/ij/runConfigurations`, `workspace/executeCommand` | Run the test at the cursor, the class, the application. Output streams as `window/logMessage` or a terminal buffer. Deferred in SPEC.md. |
+| **Run / debug configurations** | `$/ij/runConfigurations`, `$/ij/runConfiguration/run` | Run the test at the cursor (built, §5n) is one thing; running a developer's own *named, saved* Run Configurations (`RunManager`, `.run/*.run.xml`) is a distinct, unstarted piece - scoped concretely in §6c. |
 | **Build** | `$/ij/build`, `$/ij/gradleTask` | Compile the project or a module and report problems as diagnostics. |
 | **Gradle / Maven sync** | `$/ij/reimport` | Also the trigger for Indexing state ([SPEC.md §8](./SPEC.md)). |
 | **Test navigation** | `$/ij/gotoTest`, code lens | Toggle between a class and its test. |
@@ -113,6 +113,17 @@ Requested and written down with how it would be built; the order is the develope
 - **What can be run, shown in the sign column: built** (§5n).
 - **Run the test: built** (§5n).
 - **Debugging a test from the same sign stays a DAP project** (§6b).
+
+**IntelliJ Run Configurations: not started, distinct from Gradle tasks (§5k).** A Run Configuration is IntelliJ's own concept (`RunManager`) - a named, saved way to run something, which may itself be Gradle-backed (`GradleRunConfiguration`, the type `$/ij/run` (§5n) already resolves *ad hoc*, one-off, from a position) or may be a plain JVM Application, a JUnit configuration by name rather than by position, or any other registered type. A developer's own configurations (shown in IntelliJ's own run-configuration dropdown) come from two places: `RunManager.getInstance(project).allSettings` (defined in the IDE, or synced from **`.run/*.run.xml`** when the project checks its run configurations into the repo - a real, common pattern this project should read, not reimplement). Scope:
+- `$/ij/runConfigurations`: list them (name, type, and enough to show which is which - a Gradle one's task names, a JUnit one's class).
+- `$/ij/runConfiguration/run`: run one by name.
+- **Execution reuses what §5n already proved, split by configuration type**: a Gradle-backed configuration's `settings.taskNames`/`scriptParameters`/`externalProjectPath` extracted and driven through `ExternalSystemUtil.runTask`, exactly as `$/ij/run` already does (tested, reliable) - the *generic* `ProgramRunnerUtil.executeConfiguration` path failed for that type specifically (§5n's own finding) and is not to be retried for it. A plain JVM Application configuration is a different type with a different (and simpler - a real, direct process, not funnelled through Gradle) execution shape, genuinely unreproduced yet: reproduce it against the real IDE before assuming either path works for it.
+- Streaming output, per-run tracking and cancel are the *same* machinery `$/ij/run` (§5n) and `$/ij/task/run` (§5k) already have twice over; a third copy is not the goal - factor a shared runner once this exists, rather than triple the `Run` class/`finish()`/`cancel()` pattern a third time.
+- Keys/commands under `<leader>c` beside the Gradle ones (§5k), e.g. a fuzzy finder over saved configurations reusing `ij_bridge.fuzzy` and `ij_bridge.picker` as `tasks.lua` does.
+
+**Gradle task progress: output streams and finish shows (§5k); a live "what's happening now" status does not, yet - and is available for free.** Checked directly against the real listener interface `GradleTasks.kt` already implements (`ExternalSystemTaskNotificationListener`): it carries an `onStatusChange(ExternalSystemTaskNotificationEvent)` callback with a description string (e.g. "Executing task ':compileKotlin'"), which nothing currently overrides. Surfacing it as a `$/ij/task/status` notification (or riding standard LSP `$/progress`, per §2's own cross-cutting requirement, not yet wired for anything) would give a live status line during a run - Neovim's own progress UI (fidget, lualine, noice) then shows it with no bespoke rendering needed on this end. A numeric percentage bar looks like it would need IntelliJ's separate, richer Build-view event model (`com.intellij.build.events`), not yet reproduced - text status is the proven, available-now piece; the percentage bar is a genuinely open question.
+
+**Architecture question, settled by the above rather than left open: stay on IntelliJ's own execution for both.** The progress gap just found is closed by wiring a callback already sitting on the interface this project already uses - not by building or adopting a separate Gradle integration. A separately-implemented Gradle plugin would also work against the project's own **Borrowed Settings** principle (the project's real Gradle version, JVM and wrapper, exactly as IntelliJ itself resolves them, for every feature that runs anything) for no capability this reproduction found missing.
 
 **Several Neovims and several IntelliJs: built and tested** (`tests/test_multi.py`, and one case in `test_lifecycle.py`):
 
