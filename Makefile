@@ -5,7 +5,7 @@ IMAGE   ?= ij-nvim-harness:base
 VENV    ?= .venv
 PY      := $(VENV)/bin/python
 
-.PHONY: help image canary brain venv test test-fast harness shell watch clean
+.PHONY: help image canary brain brain-local canary-local venv test test-fast harness shell watch clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -17,8 +17,14 @@ image: ## Build the harness image (IntelliJ, Neovim, LazyVim, fixture)
 canary: ## Build the canary plugin against the pinned IDE
 	./scripts/build-canary.sh
 
-brain: ## Build the Brain plugin against the pinned IDE
+brain: ## Build the Brain plugin against the pinned IDE (inside Docker; needs `make image` first)
 	./scripts/build-brain.sh
+
+brain-local: ## Build the Brain plugin on this machine, no Docker (see BUILD.md for IJ_NVIM_BRIDGE_IDEA_HOME)
+	cd brain && ./gradlew buildPlugin
+
+canary-local: ## Build the canary plugin on this machine, no Docker
+	cd canary && ./gradlew buildPlugin
 
 venv: $(VENV)/bin/pytest ## Create the test virtualenv
 $(VENV)/bin/pytest:

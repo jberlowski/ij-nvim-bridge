@@ -26,6 +26,7 @@ The distinction that justifies this project: the Brain is a **running, configure
 | | |
 |---|---|
 | [CONTEXT.md](./CONTEXT.md) | Glossary. Terms are used precisely; read this first. |
+| [BUILD.md](./BUILD.md) | Building the plugins from source on your own machine: what you need, and how to point it at your IntelliJ install. |
 | [SPEC.md](./SPEC.md) | Feature set, protocol, contracts, v1/v2 split, the Spike. |
 | [FEATURES.md](./FEATURES.md) | Everything beyond the v1 spine that makes it a full language server: navigation, edits, refactoring, IDE extensions, in build order. |
 | [HARNESS.md](./HARNESS.md) | Development harness: container, observability, assertions. |

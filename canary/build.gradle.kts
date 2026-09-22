@@ -13,10 +13,12 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        // Build against the exact IDE in the image rather than downloading a
-        // second SDK: the harness pins one build (HARNESS.md §9) and the
-        // plugin should be compiled against that same one.
-        local(providers.gradleProperty("localIdePath").orElse("/opt/idea"))
+        // Build against a real IDE install rather than downloading a second SDK: the harness pins
+        // one build (HARNESS.md §9) and the plugin should be compiled against that same one. See
+        // brain/build.gradle.kts for how to point this at an install that is not at /opt/idea.
+        local(providers.gradleProperty("localIdePath")
+            .orElse(providers.environmentVariable("IJ_NVIM_BRIDGE_IDEA_HOME"))
+            .orElse("/opt/idea"))
     }
 }
 

@@ -2,16 +2,38 @@
 
 Lets Neovim borrow the code intelligence of an already-running IntelliJ. See
 [SPEC.md](../SPEC.md) for the design and [CONTEXT.md](../CONTEXT.md) for the
-vocabulary.
+vocabulary. Building the two plugins from source (including the IntelliJ side, below)
+is [BUILD.md](../BUILD.md); this document is everything after that: setting the
+IntelliJ side up once per machine, and the Neovim side up in your config.
 
-Requires Neovim 0.11+ (developed against 0.12) and blink.cmp.
+## Setup
+
+Two halves, set up once each. Neither depends on the other's setup order.
+
+### 1. IntelliJ: install the Brain plugin
+
+Build it (see [BUILD.md](../BUILD.md) if you have not), then in IntelliJ IDEA:
+**Settings → Plugins → the gear icon → Install Plugin from Disk...** and pick
+`brain/build/distributions/brain-0.1.0.zip`. Restart the IDE if it asks. Nothing
+else to configure: the Brain starts serving the open project automatically, on a
+private per-project socket (`$XDG_RUNTIME_DIR/ij-nvim-bridge/`), the moment the
+project has finished loading. Open the project(s) you want Neovim to reach.
+
+### 2. Neovim: install the plugin
+
+Requires Neovim 0.11+ (developed against 0.12) and blink.cmp for completion.
 
 ```lua
 -- lazy.nvim
-{ dir = '/path/to/ij-nvim-bridge/editor', config = function() require('ij_bridge').setup() end }
+{
+  dir = '/path/to/ij-nvim-bridge/editor',
+  event = 'VeryLazy',
+  opts = { prefix = '<leader>a', keys = true },   -- the defaults; see "Keys" below
+  config = function(_, opts) require('ij_bridge').setup(opts) end,
+}
 ```
 
-Register the completion source with blink.cmp:
+Register the completion source with blink.cmp, in blink's own `opts`:
 
 ```lua
 sources = {
@@ -24,8 +46,30 @@ sources = {
 fuzzy = { sorts = { 'sort_text' } },
 ```
 
-A file that is not inside an open IntelliJ project is **Dormant**: the plugin does
-nothing and prints nothing. `:IjBridge` says which state a buffer is in.
+### 3. Check it worked
+
+Open a file that is inside a project IntelliJ has open, and run `:IjBridge`. It
+prints which project's Brain serves the buffer, and whether it is ready. A file
+that is not inside an open IntelliJ project is **Dormant**: the plugin does
+nothing and prints nothing there — `:IjBridge` still says so if asked. If it
+never leaves "not ready", the project is likely still importing or indexing;
+`<leader>ai` (or `:IjBridge`) again once IntelliJ's own status bar is idle.
+Nothing else is required — no port, no host, no manual "start the server":
+the Brain and the Registry it publishes to are found automatically per project.
+
+### Optional: where IntelliJ itself lives
+
+Two separate settings, both machine- or user-specific, so both prefer an
+environment variable over a hardcoded value in a config you might share:
+
+- **Building** the plugin needs to know where an installed IntelliJ IDEA is, to
+  compile against its jars: `IJ_NVIM_BRIDGE_IDEA_HOME` (BUILD.md).
+- **Starting** IntelliJ from Neovim (`:IjBridge open`, below) needs to know the
+  command that launches it, if it is not on `PATH`: `IJ_NVIM_BRIDGE_IDEA_CMD`, or
+  `setup({ idea_cmd = '...' })`.
+
+These are unrelated to attaching the Bridge to an IntelliJ that is already
+running, which needs neither: discovery is automatic.
 
 ### Keys (LazyVim)
 
@@ -45,17 +89,7 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 
 **A key that needs IntelliJ exists only where IntelliJ is.** It is made, buffer-locally, when the buffer attaches to a Session, only for the filetypes it is for, and removed when the Session goes (and back when it reconnects). In a buffer with no connection, or a file of another kind, it is not there at all: which-key does not offer it and it cannot shadow anything. `:IjBridge keys` (`<leader>ak`) lists what is bound here and says why a key is missing.
 
-`<leader>g` is git and plain `g` is goto in LazyVim; nothing of the Bridge's belongs to either. **LazyVim's AI extras (Claude Code, Avante, Copilot Chat, Sidekick) share `<leader>a`** as "+ai", with `C a b c d e f h m n p q r s t v x` under it. The miscellaneous keys are ones they do not use (`g i j k l o u w y z` are free), and the test suite reads LazyVim's extras and fails if one ever collides. An empty mapping on the prefix, which is how they name their group, does not block them; an existing mapping is never overwritten (skipped, and the log says so); if the prefix itself does something, no miscellaneous key is bound. `setup{ prefix = ..., keys = false, sections = false }` change it.
-
-```lua
--- lazy.nvim, LazyVim
-{
-  dir = '/path/to/ij-nvim-bridge/editor',
-  event = 'VeryLazy',
-  opts = { prefix = '<leader>a', keys = true },   -- the defaults; keys = false binds nothing
-  config = function(_, opts) require('ij_bridge').setup(opts) end,
-}
-```
+`<leader>g` is git and plain `g` is goto in LazyVim; nothing of the Bridge's belongs to either. **LazyVim's AI extras (Claude Code, Avante, Copilot Chat, Sidekick) share `<leader>a`** as "+ai", with `C a b c d e f h m n p q r s t v x` under it. The miscellaneous keys are ones they do not use (`g i j k l o u w y z` are free), and the test suite reads LazyVim's extras and fails if one ever collides. An empty mapping on the prefix, which is how they name their group, does not block them; an existing mapping is never overwritten (skipped, and the log says so); if the prefix itself does something, no miscellaneous key is bound. Change the prefix, or turn keys off, in the `opts` from Setup step 2: `{ prefix = ..., keys = false, sections = false }`.
 
 ### Gradle tasks
 
@@ -63,7 +97,7 @@ IntelliJ already knows the project's Gradle tasks; the Bridge lists them without
 
 ### Several projects, several Neovims, starting IntelliJ
 
-Each buffer is served by the IntelliJ that has *its* project open: with two projects open (a second `idea <root>` opens it in the running IDE), one Neovim holds a Session for each and every buffer goes to its own. Several Neovims may share one IDE; closing one releases only what it had open. `:IjBridge open` (`<leader>ao`) starts the IDE for the current buffer's project when none serves it: it runs `idea <root>` (on your `PATH`; `setup{ idea_cmd = '/path/to/idea' }` otherwise) detached, so it never locks Neovim's terminal and outlives Neovim, shows `IJ: starting` until the project's Brain appears, and then attaches. It is never started by itself.
+Each buffer is served by the IntelliJ that has *its* project open: with two projects open (a second `idea <root>` opens it in the running IDE), one Neovim holds a Session for each and every buffer goes to its own. Several Neovims may share one IDE; closing one releases only what it had open. `:IjBridge open` (`<leader>ao`) starts the IDE for the current buffer's project when none serves it: it runs `idea <root>` (its command set in Setup, above) detached, so it never locks Neovim's terminal and outlives Neovim, shows `IJ: starting` until the project's Brain appears, and then attaches. It is never started by itself.
 
 ### New files and moving files
 

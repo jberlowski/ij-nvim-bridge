@@ -253,13 +253,13 @@ class TestPressingThem:
     def test_state_says_where_the_buffer_stands(self, nvim):
         nvim.command(f"edit {SHAPES}")
         wait_until(lambda: attached(nvim) == 1)
-        nvim.exec_lua("_G.__out = {}; local orig = print; print = function(...) table.insert(_G.__out, table.concat(vim.tbl_map(tostring, { ... }), ' ')) end")
+        nvim.exec_lua("_G.__out = {}; _G.__print_orig = print; print = function(...) table.insert(_G.__out, table.concat(vim.tbl_map(tostring, { ... }), ' ')) end")
         try:
             self.press(nvim, "<Space>ai")
             wait_until(lambda: any("attached to /work/fixture" in l for l in nvim.exec_lua("return _G.__out")), timeout=10,
                        message="<leader>ai did not print the state")
         finally:
-            nvim.exec_lua("print = nil")
+            nvim.exec_lua("print = _G.__print_orig")
 
     def test_lazyvims_own_organize_imports_key_works_through_the_bridge(self, nvim):
         """`<leader>co` is LazyVim's, for any server that offers `source.organizeImports`: nothing of ours is bound,

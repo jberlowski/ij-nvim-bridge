@@ -189,6 +189,35 @@ class TestOpen:
         finally:
             nvim.exec_lua("require('ij_bridge').opts.idea_cmd = nil")
 
+    def test_the_launch_command_can_be_set_by_environment_variable(self, nvim, projects):
+        """The right `idea_cmd` is often machine- or user-specific (a Toolbox script under the user's
+        home, a macOS .app's launcher), so it must be settable without editing a shared init.lua."""
+        record_notes(nvim)
+        try:
+            nvim.exec_lua("vim.env.IJ_NVIM_BRIDGE_IDEA_CMD = 'no-such-idea-command-from-env'")
+            nvim.exec_lua("vim.fn.mkdir('/tmp/fixture4/.idea', 'p')")
+            nvim.command("edit /tmp/fixture4/A.kt")
+            nvim.command("IjBridge open")
+            wait_until(lambda: any("no-such-idea-command-from-env is not on the PATH" in n for n in notes(nvim)),
+                       timeout=10, message=f"said: {notes(nvim)}")
+        finally:
+            nvim.exec_lua("vim.env.IJ_NVIM_BRIDGE_IDEA_CMD = nil")
+
+    def test_setup_idea_cmd_wins_over_the_environment_variable(self, nvim, projects):
+        record_notes(nvim)
+        try:
+            nvim.exec_lua("vim.env.IJ_NVIM_BRIDGE_IDEA_CMD = 'no-such-idea-command-from-env'")
+            nvim.exec_lua("require('ij_bridge').opts.idea_cmd = 'no-such-idea-command-from-opts'")
+            nvim.exec_lua("vim.fn.mkdir('/tmp/fixture5/.idea', 'p')")
+            nvim.command("edit /tmp/fixture5/A.kt")
+            nvim.command("IjBridge open")
+            wait_until(lambda: any("no-such-idea-command-from-opts is not on the PATH" in n for n in notes(nvim)),
+                       timeout=10, message=f"said: {notes(nvim)}")
+            assert not any("from-env" in n for n in notes(nvim))
+        finally:
+            nvim.exec_lua("vim.env.IJ_NVIM_BRIDGE_IDEA_CMD = nil")
+            nvim.exec_lua("require('ij_bridge').opts.idea_cmd = nil")
+
     def test_a_file_that_belongs_to_no_project_is_said_so(self, nvim, projects):
         nvim.command("edit /tmp/not-a-project-at-all.txt")
         record_notes(nvim)

@@ -13,8 +13,16 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        // Compile against the exact IDE in the harness image (HARNESS.md §9).
-        local(providers.gradleProperty("localIdePath").orElse("/opt/idea"))
+        // Compile against a real IDE install, not a downloaded SDK: the harness pins one build
+        // (HARNESS.md §9) and the plugin should be compiled against that same one. The install's
+        // location is never assumed: it varies by machine and is rarely on PATH (a macOS .app
+        // bundle, a Toolbox install, a path only this user has). Set it with either
+        //   ./gradlew buildPlugin -PlocalIdePath=/path/to/IntelliJ IDEA.app
+        //   IJ_NVIM_BRIDGE_IDEA_HOME=/path/to/IntelliJ IDEA.app ./gradlew buildPlugin
+        // and it defaults to /opt/idea, where the harness image installs it.
+        local(providers.gradleProperty("localIdePath")
+            .orElse(providers.environmentVariable("IJ_NVIM_BRIDGE_IDEA_HOME"))
+            .orElse("/opt/idea"))
         // Typed access to Java's and Kotlin's PSI, for generating code. Both are *optional* at run
         // time (plugin.xml): the Brain still loads, without those features, in an IDE that has neither.
         bundledPlugin("com.intellij.java")

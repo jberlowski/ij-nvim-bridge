@@ -468,9 +468,14 @@ function M.open_ide(path, callback)
     vim.notify('ij-bridge: IntelliJ is already starting for ' .. root)
     return
   end
-  local command = M.opts.idea_cmd or 'idea'
+  -- Rarely just `idea`: a Toolbox install's launcher script lives under the user's home directory
+  -- and is not on PATH, and on macOS the launcher is inside the .app bundle. That path is specific
+  -- to the machine (and often the user), so it does not belong hardcoded in a shared init.lua: the
+  -- environment variable lets it be set once per machine instead. `setup{ idea_cmd = ... }` wins if given.
+  local command = M.opts.idea_cmd or vim.env.IJ_NVIM_BRIDGE_IDEA_CMD or 'idea'
   if vim.fn.executable(command) ~= 1 then
-    vim.notify(('ij-bridge: %s is not on the PATH (set idea_cmd in setup)'):format(command), vim.log.levels.ERROR)
+    vim.notify(('ij-bridge: %s is not on the PATH (set idea_cmd in setup, or the IJ_NVIM_BRIDGE_IDEA_CMD environment variable)')
+      :format(command), vim.log.levels.ERROR)
     return
   end
 
@@ -592,7 +597,7 @@ function M.report()
   return out
 end
 
---- @param opts? { prefix?: string, keys?: boolean, sections?: boolean, idea_cmd?: string, open_timeout?: integer } miscellaneous keys under `prefix` (default `<leader>a`), the others by section (`sections = false` to skip them); `keys = false` binds nothing
+--- @param opts? { prefix?: string, keys?: boolean, sections?: boolean, idea_cmd?: string, open_timeout?: integer } miscellaneous keys under `prefix` (default `<leader>a`), the others by section (`sections = false` to skip them); `keys = false` binds nothing. `idea_cmd` (default `idea`, or the `IJ_NVIM_BRIDGE_IDEA_CMD` environment variable if that is set): the command `:IjBridge open` runs to start IntelliJ. The environment variable is the better place for it when `init.lua` is shared across machines, since the right value (a Toolbox script, a `.app` bundle's launcher) is often machine- or user-specific.
 function M.setup(opts)
   M.opts = opts or {}
   local group = vim.api.nvim_create_augroup('IjBridge', { clear = true })
