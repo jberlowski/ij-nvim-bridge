@@ -5,6 +5,7 @@
 --
 --   <leader>c   code           Gradle tasks: find and run (`cg`), the hierarchy (`cG`), run the last again (`cb`), stop (`cB`)
 --   <leader>f   file/find      new file from an IntelliJ template (`fN`; `fn` is LazyVim's own New File)
+--   <leader>t   test           go to the test / the class under test, offering to create one (`tg`)
 --   <leader>a   miscellaneous  state, opening the project, the keys, the logs
 --
 -- Organize imports is not here: `source.organizeImports` is a standard code action, and LazyVim already binds
@@ -82,6 +83,9 @@ local function actions()
       when = 'connected', ft = M.gradle },
     -- file
     { lhs = '<leader>fN', desc = 'New file from an IntelliJ template', run = function() bridge().new_file_interactive() end,
+      when = 'connected', ft = M.jvm },
+    -- test
+    { lhs = '<leader>tg', desc = 'Go to the test / the class under test', run = function() require('ij_bridge.test_nav').go() end,
       when = 'connected', ft = M.jvm },
   }
 end

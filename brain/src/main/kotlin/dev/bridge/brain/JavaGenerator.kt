@@ -120,6 +120,21 @@ class JavaGenerator : Generator {
     private fun method(aClass: PsiClass, text: String): PsiMethod =
         JavaPsiFacade.getElementFactory(aClass.project).createMethodFromText(text, aClass)
 
+    /** A public instance method worth its own test: not a constructor, not inherited (`Object`'s), not a synthetic accessor. */
+    private fun testableMethods(aClass: PsiClass): List<PsiMethod> = aClass.methods.filter {
+        it.hasModifierProperty(PsiModifier.PUBLIC) && !it.isConstructor && !it.hasModifierProperty(PsiModifier.STATIC)
+    }
+
+    override fun testSkeleton(file: PsiFile, offset: Int, testClassName: String, testPackage: String): String? {
+        val aClass = classAt(file, offset) ?: return null
+        val body = testableMethods(aClass).joinToString("\n\n") { m ->
+            val name = m.name.replaceFirstChar { it.uppercase() }
+            "    @Test\n    void test$name() {\n    }"
+        }
+        val pkg = if (testPackage.isEmpty()) "" else "package $testPackage;\n\n"
+        return "$pkg" + "import org.junit.jupiter.api.Test;\n\nclass $testClassName {\n\n$body\n}\n"
+    }
+
     /** At the end of the class, as the Generate menu does by default, then formatted and its names imported. */
     private fun insertAll(aClass: PsiClass, methods: List<PsiMethod>) {
         if (methods.isEmpty()) return

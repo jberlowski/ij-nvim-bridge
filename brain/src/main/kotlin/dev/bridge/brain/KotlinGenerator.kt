@@ -152,4 +152,26 @@ class KotlinGenerator : Generator {
         val rest = props.drop(1).joinToString("\n") { p -> hash(p).let { h -> "    result = 31 * result + ${if ("?:" in h) "($h)" else h}" } }
         return "override fun hashCode(): Int {\n    var result = $first\n${if (rest.isEmpty()) "" else "$rest\n"}    return result\n}"
     }
+
+    /** A public function worth its own test: no modifier at all defaults to public in Kotlin. */
+    private fun testableFunctions(kt: KtClass): List<KtNamedFunction> = kt.declarations.filterIsInstance<KtNamedFunction>().filter {
+        !it.hasModifier(KtTokens.PRIVATE_KEYWORD) && !it.hasModifier(KtTokens.PROTECTED_KEYWORD) && !it.hasModifier(KtTokens.INTERNAL_KEYWORD)
+    }
+
+    /** Unlike [classAt], a data class is a fair target for a test: it is only excluded from [offers]
+     * because it already has `toString`/`equals`/`hashCode`, which is not a reason to exclude it here. */
+    private fun anyClassAt(file: PsiFile, offset: Int): KtClass? {
+        val at = file.findElementAt(offset) ?: file.findElementAt((offset - 1).coerceAtLeast(0)) ?: return null
+        return PsiTreeUtil.getParentOfType(at, KtClass::class.java, false)?.takeIf { it.name != null && !it.isInterface() && !it.isAnnotation() }
+    }
+
+    override fun testSkeleton(file: PsiFile, offset: Int, testClassName: String, testPackage: String): String? {
+        val kt = anyClassAt(file, offset) ?: return null
+        val body = testableFunctions(kt).joinToString("\n\n") { f ->
+            val name = f.name.orEmpty().replaceFirstChar { it.uppercase() }
+            "    @Test\n    fun test$name() {\n    }"
+        }
+        val pkg = if (testPackage.isEmpty()) "" else "package $testPackage\n\n"
+        return "$pkg" + "import org.junit.jupiter.api.Test\n\nclass $testClassName {\n\n$body\n}\n"
+    }
 }

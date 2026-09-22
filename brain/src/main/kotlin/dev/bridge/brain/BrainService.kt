@@ -242,6 +242,7 @@ class BrainService(private val project: Project) : Disposable {
         put("renameProvider", buildJsonObject { put("prepareProvider", true) })
         put("inlayHintProvider", buildJsonObject { put("resolveProvider", false) })
         put("tasks", buildJsonObject { put("gradle", true) })
+        put("testNavigation", true) // $/ij/testTargets: an extension, LSP has no "go to test" method
         put("workspace", buildJsonObject {
             put("fileOperations", buildJsonObject {
                 val filters = kotlinx.serialization.json.JsonArray(listOf(buildJsonObject {

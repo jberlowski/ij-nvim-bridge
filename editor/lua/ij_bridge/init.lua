@@ -676,15 +676,17 @@ function M.setup(opts)
       M.open_ide(rest ~= '' and rest or nil)
     elseif sub == 'new' then
       M.new_file_interactive(rest)
+    elseif sub == 'test' then
+      require('ij_bridge.test_nav').go()
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], open [dir], keys, tasks, task, taskstop, taskrepeat)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, report, new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat)')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'report', 'new', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat' }
+      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'report', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })

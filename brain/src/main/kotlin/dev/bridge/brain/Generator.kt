@@ -36,6 +36,13 @@ interface Generator {
      */
     fun generate(copy: PsiFile, offset: Int, key: String)
 
+    /**
+     * The text of a new test class named [testClassName] in package [testPackage] (TestNavigation.kt,
+     * "go to test" offering to create one when none exists): one `@Test` stub per public method of the
+     * class at [offset] in [file], JUnit 5 Jupiter. Read action. Null if there is no class there.
+     */
+    fun testSkeleton(file: PsiFile, offset: Int, testClassName: String, testPackage: String): String?
+
     companion object {
         val EP: ExtensionPointName<Generator> = ExtensionPointName.create("dev.bridge.brain.generator")
 

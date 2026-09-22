@@ -74,6 +74,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val renames = Rename(project, locations)
     private val moves = FileMoves(project, locations)
     private val newFiles = NewFile(project)
+    private val testNavigation = TestNavigation(project, locations)
 
     companion object {
         val METHODS = setOf(
@@ -84,6 +85,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/formatting", "textDocument/rangeFormatting",
             "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
             "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles", "\$/ij/newFile", "textDocument/inlayHint",
+            "\$/ij/testTargets",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
@@ -198,6 +200,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/documentHighlight" -> highlights(editor, file, offset)
             "textDocument/signatureHelp" -> signatures.signatureHelp(project, editor, file, offset)
             "textDocument/codeAction" -> codeActions.list(mirror, params)
+            "\$/ij/testTargets" -> testNavigation.targets(mirror, offset)
             "textDocument/prepareRename" -> renames.prepare(editor, file, offset)
             "textDocument/documentSymbol" -> structure.documentSymbols(editor, file)
             "textDocument/foldingRange" -> structure.foldingRanges(file, doc)

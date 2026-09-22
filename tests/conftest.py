@@ -135,6 +135,12 @@ NEW_PROBES = [
     "src/main/kotlin/dev/bridge/fixture/probe/Shapes.kt",
     "src/main/kotlin/dev/bridge/fixture/probe/ShapeCaller.kt",
     "src/main/kotlin/dev/bridge/fixture/probe/JavaShapes.java",
+    "src/main/kotlin/dev/bridge/fixture/probe/Calculator.kt",
+    "src/main/kotlin/dev/bridge/fixture/probe/Multiplier.java",
+    "src/main/kotlin/dev/bridge/fixture/probe/NoTestYet.kt",
+    "src/main/kotlin/dev/bridge/fixture/probe/NoTestYetJava.java",
+    "src/test/kotlin/dev/bridge/fixture/probe/CalculatorTest.kt",
+    "src/test/kotlin/dev/bridge/fixture/probe/MultiplierTest.java",
 ]
 
 
