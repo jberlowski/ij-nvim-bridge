@@ -34,12 +34,15 @@ cd brain
 ```
 
 The install path is almost never the same across machines (a Toolbox install lives under the
-user's home directory; on macOS it is the `.app` bundle; a manual install can be anywhere), so it
-is a setting, not a default to guess at. Three ways to give it, checked in this order:
+user's home directory — a plain directory with `bin/idea.sh` inside on Linux, the `.app` bundle
+instead on macOS; a manual install — a tarball extracted anywhere, or a distro package — can be
+anywhere at all), so it is a setting, not a default to guess at. Three ways to give it, checked in
+this order:
 
 1. `-PlocalIdePath=...` on the command line (above).
 2. The `IJ_NVIM_BRIDGE_IDEA_HOME` environment variable — the more convenient one when you build the
-   same way repeatedly: `export IJ_NVIM_BRIDGE_IDEA_HOME="/path/to/IntelliJ IDEA.app"`.
+   same way repeatedly: `export IJ_NVIM_BRIDGE_IDEA_HOME="/path/to/idea-IU-262.10968.63"` (on
+   macOS, the `.app` bundle instead: `.../IntelliJ IDEA.app`).
 3. `/opt/idea`, if neither is set — where the development harness's Docker image installs it; not
    meaningful outside it.
 

@@ -15,11 +15,13 @@ dependencies {
     intellijPlatform {
         // Compile against a real IDE install, not a downloaded SDK: the harness pins one build
         // (HARNESS.md §9) and the plugin should be compiled against that same one. The install's
-        // location is never assumed: it varies by machine and is rarely on PATH (a macOS .app
-        // bundle, a Toolbox install, a path only this user has). Set it with either
-        //   ./gradlew buildPlugin -PlocalIdePath=/path/to/IntelliJ IDEA.app
-        //   IJ_NVIM_BRIDGE_IDEA_HOME=/path/to/IntelliJ IDEA.app ./gradlew buildPlugin
-        // and it defaults to /opt/idea, where the harness image installs it.
+        // location is never assumed: it varies by machine and is rarely on PATH (a Toolbox
+        // install, a manual tarball extract, a macOS .app bundle instead of a plain directory, a
+        // path only this user has). Set it with either
+        //   ./gradlew buildPlugin -PlocalIdePath=/path/to/idea-IU-262.10968.63
+        //   IJ_NVIM_BRIDGE_IDEA_HOME=/path/to/idea-IU-262.10968.63 ./gradlew buildPlugin
+        // (on macOS this is the `.app` bundle instead) and it defaults to /opt/idea, where the
+        // harness image installs it.
         local(providers.gradleProperty("localIdePath")
             .orElse(providers.environmentVariable("IJ_NVIM_BRIDGE_IDEA_HOME"))
             .orElse("/opt/idea"))
