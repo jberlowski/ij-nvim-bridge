@@ -137,6 +137,11 @@ local function connect(buf, entry)
     cmd = log.traced_connect(entry.sock),
     root_dir = entry.root,
     capabilities = capabilities(),
+    -- Opt-in (FEATURES.md §6c): off unless asked for, since it changes what `:w` means. The Brain
+    -- reads this once, at `initialize`, and answers every `willSaveWaitUntil` accordingly for the
+    -- Session's own life; Neovim's own core applies whatever edits come back before the write, the
+    -- same mechanism the version-ack handshake (SPEC.md §5.4) already rides.
+    init_options = { formatOnSave = M.opts.format_on_save == true },
     handlers = {
       ['$/ij/completionItems'] = function(err, params)
         require('ij_bridge.blink').on_items(err, params)

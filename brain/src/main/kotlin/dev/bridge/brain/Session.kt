@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -31,6 +32,9 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
     private val id = UUID.randomUUID().toString().take(6)
     private val transport = Transport(Channels.newOutputStream(conn), id, brain.record)
     private var count = 0L
+
+    /** Opt-in (FEATURES.md §6c), read once at `initialize` from `initializationOptions.formatOnSave`. */
+    private var formatOnSave = false
 
     fun run() {
         brain.register(transport)
@@ -75,14 +79,18 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
         recordArrival(method, id, params)
         try {
             when (method) {
-                "initialize" -> reply(id, buildJsonObject {
-                    put("capabilities", brain.capabilities())
-                    put("serverInfo", buildJsonObject {
-                        put("name", "ij-nvim-bridge"); put("version", "0.1.0")
-                        put("session", this@Session.id)
-                        brain.record.path?.let { put("log", it.toString()) }
+                "initialize" -> {
+                    formatOnSave = params["initializationOptions"]?.jsonObject
+                        ?.get("formatOnSave")?.jsonPrimitive?.booleanOrNull == true
+                    reply(id, buildJsonObject {
+                        put("capabilities", brain.capabilities())
+                        put("serverInfo", buildJsonObject {
+                            put("name", "ij-nvim-bridge"); put("version", "0.1.0")
+                            put("session", this@Session.id)
+                            brain.record.path?.let { put("log", it.toString()) }
+                        })
                     })
-                })
+                }
                 // Tell this Editor where the Brain stands, so it never has to ask.
                 "initialized" -> transport.send(Wire.notification("\$/ij/status", brain.status().toJson()))
                 "shutdown" -> reply(id, JsonNull)
@@ -99,11 +107,16 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 }
                 // SPEC.md §5.4: the Editor's "await Brain ack of version N" before it
                 // writes. Messages are handled in order, so by the time this reply
-                // exists every earlier didChange has been applied. The reply is
-                // an empty edit list - the Brain never edits on save (v2).
+                // exists every earlier didChange has been applied. Format on save
+                // (FEATURES.md §6c) is opt-in (`formatOnSave`, read once at `initialize`):
+                // off, the reply is an empty edit list, as it always was; on, it rides
+                // this same round trip with the whole-file reformat `textDocument/formatting`
+                // already computes (D2: a copy, diffed - the Mirror is never touched here either).
                 "textDocument/willSaveWaitUntil" -> {
                     brain.saveAcks.incrementAndGet()
-                    reply(id, JsonArray(emptyList()))
+                    val uri = params.obj("textDocument").str("uri")
+                    val edits = if (formatOnSave) brain.mirrors.get(uri)?.let { brain.formatting.edits(it, null) } else null
+                    reply(id, edits ?: JsonArray(emptyList()))
                 }
                 "textDocument/didSave" -> {
                     val doc = params.obj("textDocument")

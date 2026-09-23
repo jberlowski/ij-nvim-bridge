@@ -81,6 +81,12 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 | | `<leader>cG` | Gradle: the tasks as a hierarchy (project, group, task) | same |
 | | `<leader>cb` | Gradle: run the last task again | same |
 | | `<leader>cB` | Gradle: stop the running task | same |
+| | `<leader>ce` | **Run Configuration: find and run it** (Gradle-backed ones only, so far) | same |
+| | `<leader>cE` | Run Configuration: run the last one again | same |
+| | `<leader>cK` | Run Configuration: stop the running one | same |
+| test | `<leader>tg` | Go to the test / the class under test, offering to create one | Kotlin and Java buffers with an IntelliJ connection |
+| | `<leader>tn` `tc` `tf` | Run the nearest test / every test in this class / file | same |
+| | `<leader>tR` `tx` | Run the last test again / stop the running one | same |
 | file/find | `<leader>fN` | New file from an IntelliJ template (asks kind and name); `fn` is LazyVim's own New File | Kotlin and Java buffers **with an IntelliJ connection** |
 | miscellaneous | `<leader>ai` | State of this buffer (attached, indexing, ...) | everywhere |
 | | `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | everywhere (it is how to get a connection) |
@@ -93,7 +99,15 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 
 ### Gradle tasks
 
-IntelliJ already knows the project's Gradle tasks; the Bridge lists them without running anything and runs one through IntelliJ's own Gradle integration (the project's settings, JVM and wrapper). `<leader>cg` (or `:IjBridge task`) opens a fuzzy finder: type any letters of the name in order (`eas`, `fMT` for the capitals of `findMysteriousTreasure`, `trea`), move with `<C-n>`/`<C-p>`, `<CR>` runs it. `<leader>cG` (`:IjBridge tasks`) shows the hierarchy, project then group then task, with descriptions; `<Tab>` folds, `<CR>` runs, `a` runs with arguments, `/` opens the finder. The output streams into a buffer at the bottom without taking your window, and ends with `✔ finished`, `✘ failed` or `■ cancelled`. `<leader>cb` runs the last again and `<leader>cB` stops the running one. One task runs at a time.
+IntelliJ already knows the project's Gradle tasks; the Bridge lists them without running anything and runs one through IntelliJ's own Gradle integration (the project's settings, JVM and wrapper). `<leader>cg` (or `:IjBridge task`) opens a fuzzy finder: type any letters of the name in order (`eas`, `fMT` for the capitals of `findMysteriousTreasure`, `trea`), move with `<C-n>`/`<C-p>`, `<CR>` runs it. `<leader>cG` (`:IjBridge tasks`) shows the hierarchy, project then group then task, with descriptions; `<Tab>` folds, `<CR>` runs, `a` runs with arguments, `/` opens the finder. The output streams into a buffer at the bottom without taking your window, and ends with `✔ finished`, `✘ failed` or `■ cancelled`. `<leader>cb` runs the last again and `<leader>cB` stops the running one. One task runs at a time. A live status line (what IntelliJ's own Gradle tool window would show, e.g. "Executing task ':compileKotlin'") shows as a `winbar` on the output window while it runs.
+
+### Run Configurations
+
+A developer's own named, saved way to run something (IntelliJ's Run/Debug Configurations dropdown), including ones checked into the project's own `.run` folder and so shared with everyone who clones it - distinct from a raw Gradle task, above. `<leader>ce` opens the same kind of fuzzy finder over every configuration IntelliJ knows about; choosing a Gradle-backed one runs it the same way a Gradle task does (streamed output, a live status, `✔`/`✘`/`■` at the end). **Only Gradle-backed configurations can be run so far** - a plain JVM Application configuration is listed but refuses to run, named as "not runnable yet" in the finder, a real known gap rather than a silent failure. `<leader>cE` runs the last one again, `<leader>cK` stops the running one.
+
+### Format on save
+
+Off by default, since it changes what `:w` means: `setup({ format_on_save = true })` makes every save reformat the buffer in IntelliJ's own code style first (`.editorconfig`, the project's scheme), the same edits `<leader>cf` already computes. Rides the version-ack handshake every save already does (above): no extra round trip, no extra keystroke.
 
 ### Several projects, several Neovims, starting IntelliJ
 

@@ -68,7 +68,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
     private val locations = Locations(project)
     private val structure = StructureFeatures(project, locations)
     private val signatures = SignatureHelp()
-    private val formatting = Formatting(project)
+    private val formatting = brain.formatting
     private val codeActions = CodeActions(project)
     private val insertion = CompletionInsertion(project, brain.completion.store)
     private val renames = Rename(project, locations)

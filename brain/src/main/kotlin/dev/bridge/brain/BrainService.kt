@@ -56,6 +56,7 @@ class BrainService(private val project: Project) : Disposable {
     val mirrors = MirrorSet(project).also { Disposer.register(this, it) }
     val completion = CompletionEngine(project, record).also { Disposer.register(this, it) }
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
+    val formatting = Formatting(project)
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
     val gradle = GradleTasks(project, this)
     val runConfigurations = RunConfigurations(project, this)
