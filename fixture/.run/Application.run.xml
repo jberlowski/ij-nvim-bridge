@@ -1,0 +1,9 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Application" type="JetRunConfigurationType" factoryName="Kotlin">
+    <module name="fixture.main" />
+    <option name="MAIN_CLASS_NAME" value="dev.bridge.fixture.ApplicationKt" />
+    <method v="2">
+      <option name="Make" enabled="false" />
+    </method>
+  </configuration>
+</component>

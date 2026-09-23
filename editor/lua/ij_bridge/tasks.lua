@@ -183,6 +183,22 @@ function M.output_buffer_for_tests()
   return (output_buf and vim.api.nvim_buf_is_valid(output_buf)) and output_buf or nil
 end
 
+--- What is happening right now, as IntelliJ's own Gradle tool window would show it - a winbar on
+--- the output window, not a scrolling line, so "Building..." repeated a hundred times does not
+--- flood the buffer a developer may want to scroll back through.
+local function set_status(buf, text)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    vim.wo[win].winbar = (text and text ~= '') and ('IntelliJ: ' .. text) or ''
+  end
+end
+
+function M.on_status(params)
+  local state = M.run_state
+  if state and state.id == params.runId and vim.api.nvim_buf_is_valid(state.buf) then
+    set_status(state.buf, params.description)
+  end
+end
+
 function M.on_output(params)
   local state = M.run_state
   if state and state.id == params.runId and vim.api.nvim_buf_is_valid(state.buf) then
@@ -203,6 +219,7 @@ function M.on_finished(params)
   end
   if state and state.id == params.runId and vim.api.nvim_buf_is_valid(state.buf) then
     append(state.buf, '\n' .. summary .. '\n')
+    set_status(state.buf, nil)
     state.finished = params
   end
   log.info('task_finished', { run = params.runId, success = params.success, cancelled = params.cancelled, ms = params.ms })

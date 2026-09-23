@@ -143,6 +143,9 @@ NEW_PROBES = [
     "src/test/kotlin/dev/bridge/fixture/probe/MultiplierTest.java",
     "src/test/kotlin/dev/bridge/fixture/probe/FailingTest.kt",
     "src/test/kotlin/dev/bridge/fixture/probe/SlowTest.kt",
+    ".run/Application.run.xml",
+    ".run/Gradle Help (Info).run.xml",
+    ".run/Gradle Build.run.xml",
 ]
 
 

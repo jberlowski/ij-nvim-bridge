@@ -4,6 +4,7 @@
 -- `<leader>cf`, ...): they are ordinary LSP. What is left goes where LazyVim would look for it, by section:
 --
 --   <leader>c   code           Gradle tasks: find and run (`cg`), the hierarchy (`cG`), run the last again (`cb`), stop (`cB`)
+--                              Run Configurations: find and run (`ce`), run the last again (`cE`), stop (`cK`)
 --   <leader>f   file/find      new file from an IntelliJ template (`fN`; `fn` is LazyVim's own New File)
 --   <leader>t   test           go to the test (`tg`); run nearest/class/file, repeat, stop (`tn`, `tc`, `tf`, `tR`, `tx`)
 --   <leader>a   miscellaneous  state, opening the project, the keys, the logs
@@ -80,6 +81,13 @@ local function actions()
     { lhs = '<leader>cb', desc = 'Gradle: run the last task again', run = function() require('ij_bridge.tasks').repeat_last() end,
       when = 'connected', ft = M.gradle },
     { lhs = '<leader>cB', desc = 'Gradle: stop the running task', run = function() require('ij_bridge.tasks').stop() end,
+      when = 'connected', ft = M.gradle },
+    -- code: Run Configurations
+    { lhs = '<leader>ce', desc = 'Run Configuration: find and run it', run = function() require('ij_bridge.runconfigs').pick() end,
+      when = 'connected', ft = M.gradle },
+    { lhs = '<leader>cE', desc = 'Run Configuration: run the last one again', run = function() require('ij_bridge.runconfigs').repeat_last() end,
+      when = 'connected', ft = M.gradle },
+    { lhs = '<leader>cK', desc = 'Run Configuration: stop the running one', run = function() require('ij_bridge.runconfigs').stop() end,
       when = 'connected', ft = M.gradle },
     -- file
     { lhs = '<leader>fN', desc = 'New file from an IntelliJ template', run = function() bridge().new_file_interactive() end,

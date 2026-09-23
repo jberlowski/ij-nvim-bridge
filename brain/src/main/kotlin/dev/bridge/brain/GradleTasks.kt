@@ -135,6 +135,14 @@ class GradleTasks(private val project: Project, private val brain: BrainService)
         val listener = object : ExternalSystemTaskNotificationListener {
             override fun onStart(id: ExternalSystemTaskId) { run.taskId = id }
             override fun onStart(id: ExternalSystemTaskId, workingDir: String?) { run.taskId = id }
+            // What is happening right now (e.g. "Executing task ':compileKotlin'") - the same signal
+            // IntelliJ's own Gradle tool window shows as its live status line. Free: this listener
+            // already carries it, just not forwarded before now.
+            override fun onStatusChange(event: com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationEvent) {
+                transport.send(Wire.notification("\$/ij/task/status", buildJsonObject {
+                    put("runId", run.id); put("description", event.description)
+                }))
+            }
             override fun onTaskOutput(id: ExternalSystemTaskId, text: String, stdOut: Boolean) {
                 transport.send(Wire.notification("\$/ij/task/output", buildJsonObject {
                     put("runId", run.id); put("text", text); put("stdout", stdOut)

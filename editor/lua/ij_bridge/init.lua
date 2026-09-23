@@ -144,8 +144,20 @@ local function connect(buf, entry)
       ['$/ij/task/output'] = function(_, params)
         require('ij_bridge.tasks').on_output(params)
       end,
+      ['$/ij/task/status'] = function(_, params)
+        require('ij_bridge.tasks').on_status(params)
+      end,
       ['$/ij/task/finished'] = function(_, params)
         require('ij_bridge.tasks').on_finished(params)
+      end,
+      ['$/ij/runConfiguration/output'] = function(_, params)
+        require('ij_bridge.runconfigs').on_output(params)
+      end,
+      ['$/ij/runConfiguration/status'] = function(_, params)
+        require('ij_bridge.runconfigs').on_status(params)
+      end,
+      ['$/ij/runConfiguration/finished'] = function(_, params)
+        require('ij_bridge.runconfigs').on_finished(params)
       end,
       ['$/ij/runnables'] = function(_, params)
         require('ij_bridge.runnables').on_runnables(params)

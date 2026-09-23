@@ -192,6 +192,12 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 })
                 "\$/ij/task/run" -> reply(id, brain.gradle.run(params, transport))
                 "\$/ij/task/cancel" -> reply(id, brain.gradle.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
+                // IntelliJ Run Configurations (FEATURES.md §6c): named, saved, possibly .run/-persisted.
+                "\$/ij/runConfigurations" -> reply(id, com.intellij.openapi.application.ReadAction.compute<JsonElement, RuntimeException> {
+                    brain.runConfigurations.list()
+                })
+                "\$/ij/runConfiguration/run" -> reply(id, brain.runConfigurations.run(params, transport))
+                "\$/ij/runConfiguration/cancel" -> reply(id, brain.runConfigurations.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
                 // Run the test (FEATURES.md §6c): the marker's own Run action, performed for a position.
                 "\$/ij/run" -> {
                     val uri = params.obj("textDocument").str("uri")

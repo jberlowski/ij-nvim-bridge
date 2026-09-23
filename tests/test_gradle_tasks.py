@@ -105,6 +105,16 @@ class TestRunning:
         assert finished["success"] is True
         assert "Detailed task information for projects" in text_of(output), text_of(output)[-400:]
 
+    def test_a_live_status_streams_too(self, wire):
+        """`$/ij/task/status`: what IntelliJ's own Gradle tool window shows as it runs - free on the
+        same listener that already carries the output, just not forwarded before now."""
+        started = wire.request("$/ij/task/run", {"path": ROOT, "tasks": ["help"]}, timeout=60)
+        collect(wire, started["runId"])  # drains output/finished; status went to the inbox instead
+        statuses = [m["params"] for m in wire.inbox if m.get("method") == "$/ij/task/status"
+                    and m["params"]["runId"] == started["runId"]]
+        assert statuses, "no $/ij/task/status notification arrived"
+        assert all("runId" in s and "description" in s for s in statuses)
+
     def test_the_run_is_recorded_in_the_brains_log(self, wire, bridge_container):
         path = wire.request("$/ij/log", {})["path"]
         run_task(wire, ["help"])

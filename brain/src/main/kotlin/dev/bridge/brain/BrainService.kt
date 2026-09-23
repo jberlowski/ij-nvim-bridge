@@ -58,6 +58,7 @@ class BrainService(private val project: Project) : Disposable {
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
     val gradle = GradleTasks(project, this)
+    val runConfigurations = RunConfigurations(project, this)
     val runnables = RunnablesPublisher(project, this).also { Disposer.register(this, it) }
     val testRunner = TestRunner(project, this)
     val inlayHints = InlayHints(project, this).also {
@@ -249,6 +250,7 @@ class BrainService(private val project: Project) : Disposable {
         put("tasks", buildJsonObject { put("gradle", true) })
         put("testNavigation", true) // $/ij/testTargets: an extension, LSP has no "go to test" method
         put("testRunning", true) // $/ij/runnables, $/ij/run, $/ij/run/cancel: extensions, no LSP equivalent
+        put("runConfigurations", true) // $/ij/runConfigurations, $/ij/runConfiguration/run and /cancel
         put("workspace", buildJsonObject {
             put("fileOperations", buildJsonObject {
                 val filters = kotlinx.serialization.json.JsonArray(listOf(buildJsonObject {
