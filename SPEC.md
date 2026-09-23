@@ -1,6 +1,6 @@
 # IJ-Nvim Bridge — Specification
 
-Status: **two slices built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state, incremental completion and the navigation core (definition, type definition, implementation, references, hover, highlights) and symbols (document and workspace symbols, folding, selection ranges, signature help) are built, as are formatting, organize imports, completion insertion, rename, moving a file and new files from templates and quick fixes and intentions as code actions, inlay hints, generate code and Gradle tasks (with a fuzzy finder); several Neovims and several IntelliJs (with `:IjBridge open` to start one); the debug logs (§15) are built, and the gold-standard scenario of FEATURES.md §11b passes. Next is code actions and rename; see [FEATURES.md](./FEATURES.md).
+Status: **the v1 spine and most of Tiers 1-4 are built.** The Brain implements the Registry, Sessions, the Mirror Set and streaming completion; the Neovim plugin discovers, mirrors, saves and shows IntelliJ's completions in blink.cmp, with IntelliJ in the background. Diagnostics, the Indexing state, incremental completion and the navigation core (definition, type definition, implementation, references, hover, highlights) and symbols (document and workspace symbols, folding, selection ranges, signature help) are built, as are formatting, organize imports, completion insertion, code actions (quick fixes and intentions), rename, generate code, inline variable (Java), moving a file and new files from templates, inlay hints, Gradle tasks (with a fuzzy finder and a hierarchy view), IntelliJ Run Configurations (Gradle-backed), test navigation and running (with the sign column), and format-on-save (opt-in); several Neovims and several IntelliJs (with `:IjBridge open` to start one); the debug logs (§15) are built, and the gold-standard scenario of FEATURES.md §11b passes. Next: Kotlin's inline/move refactorings and extract method/variable (parked pending their own scratch-copy spike, D2), call and type hierarchies, code lens, and the plain-JVM-Application Run Configuration gap; see [FEATURES.md](./FEATURES.md) §6d for the full queue.
 
 Vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Capitalised terms are glossary terms.
 
@@ -346,9 +346,9 @@ The very first completion after IDE start took **2.4 s** to first items and 5.5 
 
 **Next.**
 
-Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. What comes next is the rest of the edits (extract/inline/move refactorings, hierarchies), in [FEATURES.md](./FEATURES.md) §11.
+Nothing further is queued from v1: the two features recorded here (incremental completion and the answer cache) are built, see §6.5. Formatting, code actions, rename, generate code, Gradle tasks, Run Configurations, test navigation/running and format-on-save are also built (see [FEATURES.md](./FEATURES.md) §11 for each). What comes next is Kotlin's inline/move refactorings and extract method/variable (parked pending their own scratch-copy spike, D2) and hierarchies, in [FEATURES.md](./FEATURES.md) §6d.
 
-**Deferred.** Bidirectional caret following · run configurations · refactorings beyond rename · licensed-tier harness profile and deep Spring assertions.
+**Deferred.** Bidirectional caret following · extract/inline/move refactorings beyond Java's inline-variable and rename · a runnable plain-JVM-Application Run Configuration · licensed-tier harness profile and deep Spring assertions.
 
 **Never.** Co-editing · headless operation · any polyfill for a missing Capability.
 
@@ -388,4 +388,4 @@ When something goes wrong on somebody else's machine, the only evidence is what 
 - **Overhead budget of 15ms p95** now has a first measurement (§7), but not one that includes the Editor. Confirm or replace once it does.
 - **Coalescing intervals** (30ms completion, 150ms diagnostics) are guesses, to be tuned against the harness.
 - ~~How the Brain detects an import in flight.~~ Resolved: `ExternalSystemProcessingManager.hasTaskOfTypeInProgress(RESOLVE_PROJECT, project)`, read directly (§8).
-- **Multiple nvim instances against one project** — several Sessions on one socket. Expected to work; untested.
+- ~~Multiple nvim instances against one project — several Sessions on one socket. Expected to work; untested.~~ Resolved: built and tested (`tests/test_multi.py`), see [FEATURES.md](./FEATURES.md) §6c.
