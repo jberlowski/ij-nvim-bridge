@@ -183,6 +183,8 @@ Per Passthrough these need **no Bridge code**: each is a `LookupElement`, a refe
 
 Examples, all reached through the standard methods above: bean navigation and `@Autowired` resolution as definition/references; configuration-key completion and navigation in `application.yml`; endpoint search as workspace symbols; JPA entity/repository navigation; Thymeleaf and template references; Spring Security and Data inspections as diagnostics and quick fixes.
 
+**Reported directly, and today this is theory, not fact: opening `application.yml`/`application.properties` gets none of it.** Only whatever Neovim's own buffer/dictionary completion offers, not IntelliJ's Spring-aware key completion or navigation. Likely cause, not yet confirmed: the Editor only attaches a Session/Mirror for `kotlin`/`java` buffers (`keys.lua`'s `M.jvm`, and the filetype checks in `init.lua`), so a YAML or `.properties` buffer never gets a Session at all - Passthrough's "no Bridge code needed" argument assumes a Session exists to pass the request through, and for these filetypes none does. Needs its own line item before it can ride existing Tier 1 plumbing: attach (at least) `yaml`/`properties`/`toml` filetypes to a Session the same way `kotlin`/`java` are, then verify the standard methods (`textDocument/completion`, `definition`) actually reach Spring's config-key contributor once a Session and Mirror exist for the file.
+
 ## 9. Extensions summary
 
 The `$/ij/*` methods this document introduces, gathered. Each must also be reachable through a standard surface (code action, command, code lens) where one exists.
