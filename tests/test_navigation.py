@@ -61,7 +61,7 @@ class TestCapabilities:
         from harness.wire import Wire
         with Wire(bridge.port) as w:
             caps = w.initialize()["capabilities"]
-        for name in ("definitionProvider", "typeDefinitionProvider", "implementationProvider",
+        for name in ("definitionProvider", "declarationProvider", "typeDefinitionProvider", "implementationProvider",
                      "referencesProvider", "hoverProvider", "documentHighlightProvider",
                      "documentSymbolProvider", "workspaceSymbolProvider", "foldingRangeProvider",
                      "selectionRangeProvider"):
@@ -151,6 +151,40 @@ class TestDefinition:
             assert wire.await_response(rid, timeout=10)["error"]["code"] == -32801
         finally:
             wire.request("$/ij/debug/navigationDelay", {"ms": 0})
+
+
+# ------------------------------------------------------------- declaration
+class TestDeclaration:
+    """Java and Kotlin have no header/source split: a declaration is the definition."""
+
+    def test_kotlin_call_goes_to_the_interface_method(self, bridge_container, wire):
+        t = mirror(wire, bridge_container, SHAPES)[SHAPES]
+        pos = at(t, "shape.area()", 0, 6)
+        assert ask(wire, "textDocument/declaration", SHAPES, pos) == ask(wire, "textDocument/definition", SHAPES, pos)
+        assert lines_of(ask(wire, "textDocument/declaration", SHAPES, pos), SHAPES) == [at(t, "fun area(): Double", 0)[0]]
+
+    def test_java_call_goes_to_the_interface_method(self, bridge_container, wire):
+        t = mirror(wire, bridge_container, JAVA)[JAVA]
+        pos = at(t, "shape.perimeter()", 0, 6)
+        assert ask(wire, "textDocument/declaration", JAVA, pos) == ask(wire, "textDocument/definition", JAVA, pos)
+
+
+# ------------------------------------------------------------ copy reference
+class TestCopyReference:
+
+    def test_a_kotlin_method_is_named_by_its_class(self, bridge_container, wire):
+        t = mirror(wire, bridge_container, SHAPES)[SHAPES]
+        pos = at(t, "fun area(): Double", 0, 4)
+        name = wire.request("$/ij/copyReference", {"textDocument": {"uri": uri(SHAPES)},
+                            "position": {"line": pos[0], "character": pos[1]}}, timeout=60)["name"]
+        assert name == "dev.bridge.fixture.probe.Shape#area", name
+
+    def test_a_java_method_is_named_by_its_class(self, bridge_container, wire):
+        t = mirror(wire, bridge_container, JAVA)[JAVA]
+        pos = at(t, "shape.perimeter()", 0, 6)          # a usage: the reference is of the method it uses
+        name = wire.request("$/ij/copyReference", {"textDocument": {"uri": uri(JAVA)},
+                            "position": {"line": pos[0], "character": pos[1]}}, timeout=60)["name"]
+        assert name == "dev.bridge.fixture.probe.JavaShapes.Shape#perimeter", name
 
 
 # ---------------------------------------------------------- type definition
@@ -299,6 +333,18 @@ class TestThroughNeovimsBuiltins:
         t = goto(nvim, SHAPES, "shape.area()", 0, 6)
         items = builtin(nvim, "definition")
         assert [(i["file"], i["lnum"]) for i in items] == [(SHAPES, at(t, "fun area(): Double", 0)[0] + 1)]
+
+    def test_go_to_declaration(self, nvim):
+        t = goto(nvim, SHAPES, "shape.area()", 0, 6)
+        items = builtin(nvim, "declaration")
+        assert [(i["file"], i["lnum"]) for i in items] == [(SHAPES, at(t, "fun area(): Double", 0)[0] + 1)]
+
+    def test_copy_reference_puts_the_name_in_the_register(self, nvim):
+        goto(nvim, SHAPES, "fun area(): Double", 0, 4)
+        nvim.exec_lua("_G.__ref = nil; require('ij_bridge').copy_reference(function(n) _G.__ref = n end)")
+        wait_until(lambda: nvim.exec_lua("return _G.__ref") is not None, message="no reference came back")
+        name = nvim.exec_lua("return _G.__ref")
+        assert nvim.exec_lua("return vim.fn.getreg('\"')") == name and "area" in name, name
 
     def test_go_to_type_definition(self, nvim):
         t = goto(nvim, SHAPES, "shape.area()", 0, 0)

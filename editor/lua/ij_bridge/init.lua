@@ -447,6 +447,33 @@ function M.new_file(opts, callback)
 end
 
 --- `:IjBridge new [dir]`: asks what and what to call it.
+--- IntelliJ's "Copy Reference": the fully qualified name of the symbol under the cursor, into the
+--- clipboard register and the unnamed one. `callback(name)` is for tests and other callers.
+function M.copy_reference(callback)
+  local buf = vim.api.nvim_get_current_buf()
+  local client = M.client(buf)
+  if not client then
+    vim.notify('ij-bridge: no IntelliJ connection', vim.log.levels.WARN)
+    return
+  end
+  local pos = vim.api.nvim_win_get_cursor(0)
+  client:request('$/ij/copyReference', {
+    textDocument = { uri = vim.uri_from_bufnr(buf) },
+    position = { line = pos[1] - 1, character = pos[2] },
+  }, function(err, result)
+    if err or not (result and result.name) then
+      vim.notify('ij-bridge: no reference here' .. (err and (': ' .. err.message) or ''), vim.log.levels.WARN)
+      return
+    end
+    vim.fn.setreg('"', result.name)
+    pcall(vim.fn.setreg, '+', result.name)
+    vim.notify('ij-bridge: copied ' .. result.name)
+    if callback then
+      callback(result.name)
+    end
+  end, buf)
+end
+
 function M.new_file_interactive(dir)
   local language = vim.bo.filetype == 'java' and 'java' or 'kotlin'
   vim.ui.select(KINDS[language], { prompt = 'New ' .. language .. ' file' }, function(kind)
@@ -727,6 +754,8 @@ function M.setup(opts)
       else
         print('ij-bridge: unknown level ' .. rest .. ' (error, warn, info, hint)')
       end
+    elseif sub == 'copyref' then
+      M.copy_reference()
     elseif sub == 'report' then
       M.report()
     elseif sub == 'tasks' then
@@ -748,12 +777,12 @@ function M.setup(opts)
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint], report, new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint], report, copyref, new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'diagnostics', 'report', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat', 'sync' }
+      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'diagnostics', 'report', 'copyref', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat', 'sync' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })

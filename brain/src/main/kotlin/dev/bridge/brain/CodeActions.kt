@@ -99,14 +99,20 @@ class CodeActions(private val project: Project) {
             info.errorFixesToShow to QUICK_FIX, info.inspectionFixesToShow to QUICK_FIX,
             info.intentionsToShow to REWRITE,
         )
+        val element = file.findElementAt(mirror.editor.caretModel.offset)
         for ((descriptors, kind) in groups) {
             for (descriptor in descriptors) {
-                val intention = descriptor.action
-                val mod = intention.asModCommandAction() ?: continue
-                val presentation = mod.getPresentation(context) ?: continue
-                val title = presentation.name.ifBlank { intention.text }
-                val key = "${intention.familyName}|$title"
-                out.putIfAbsent(key, Offer(kind, key, title, mod))
+                // The action itself, then what IntelliJ tucks under its arrow in the popup: "Suppress for
+                // statement / method / class" and the like.
+                val options: List<com.intellij.codeInsight.intention.IntentionAction> =
+                    element?.let { runCatching { descriptor.getOptions(it, mirror.editor)?.toList() }.getOrNull() }.orEmpty()
+                for (intention in listOf(descriptor.action) + options) {
+                    val mod = intention.asModCommandAction() ?: continue
+                    val presentation = mod.getPresentation(context) ?: continue
+                    val title = presentation.name.ifBlank { intention.text }
+                    val key = "${intention.familyName}|$title"
+                    out.putIfAbsent(key, Offer(kind, key, title, mod))
+                }
             }
         }
         return out.values.toList()

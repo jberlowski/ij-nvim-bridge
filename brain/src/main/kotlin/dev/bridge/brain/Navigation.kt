@@ -78,14 +78,14 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
 
     companion object {
         val METHODS = setOf(
-            "textDocument/definition", "textDocument/typeDefinition", "textDocument/implementation",
+            "textDocument/definition", "textDocument/declaration", "textDocument/typeDefinition", "textDocument/implementation",
             "textDocument/references", "textDocument/hover", "textDocument/documentHighlight",
             "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/selectionRange",
             "workspace/symbol", "textDocument/signatureHelp",
             "textDocument/formatting", "textDocument/rangeFormatting",
             "textDocument/codeAction", "codeAction/resolve", "completionItem/resolve",
             "textDocument/prepareRename", "textDocument/rename", "workspace/willRenameFiles", "\$/ij/newFile", "textDocument/inlayHint",
-            "\$/ij/testTargets",
+            "\$/ij/testTargets", "\$/ij/copyReference",
         )
         /** Edits: computed on a copy, needing a write action, so not read-only. */
         val FORMATTING = setOf("textDocument/formatting", "textDocument/rangeFormatting")
@@ -186,7 +186,8 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
         val file = PsiDocumentManager.getInstance(project).getPsiFile(doc)
             ?: return JsonNull
         return when (method) {
-            "textDocument/definition" -> locationsOf(
+            // Java and Kotlin have no header/source split, so a declaration is the definition.
+            "textDocument/definition", "textDocument/declaration" -> locationsOf(
                 GotoDeclarationAction.findAllTargetElements(project, editor, offset)?.filterNotNull().orEmpty())
             "textDocument/typeDefinition" -> locationsOf(
                 GotoTypeDeclarationAction.findSymbolTypes(editor, offset)?.filterNotNull().orEmpty())
@@ -201,6 +202,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
             "textDocument/signatureHelp" -> signatures.signatureHelp(project, editor, file, offset)
             "textDocument/codeAction" -> codeActions.list(mirror, params)
             "\$/ij/testTargets" -> testNavigation.targets(mirror, offset)
+            "\$/ij/copyReference" -> copyReference(editor, file, offset)
             "textDocument/prepareRename" -> renames.prepare(editor, file, offset)
             "textDocument/documentSymbol" -> structure.documentSymbols(editor, file)
             "textDocument/foldingRange" -> structure.foldingRanges(file, doc)
@@ -208,6 +210,21 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                 editor, file, (params["positions"] as? JsonArray)?.map { it.jsonObject } ?: emptyList())
             else -> throw IllegalArgumentException("not a navigation method: $method")
         }
+    }
+
+    /**
+     * IntelliJ's "Copy Reference": the fully qualified name of the symbol at the position, from the same
+     * `QualifiedNameProvider`s the action asks (Java gives `pkg.Class#method`, Kotlin its own form). The
+     * symbol is the one under the caret, else the declaration around it; a place with neither answers the
+     * file's path. Nothing changes: the Editor decides what to do with the text.
+     */
+    private fun copyReference(editor: com.intellij.openapi.editor.Editor, file: com.intellij.psi.PsiFile, offset: Int): JsonElement {
+        val element = target(editor, offset)
+            ?: file.findElementAt(offset)?.let { com.intellij.psi.util.PsiTreeUtil.getParentOfType(it, com.intellij.psi.PsiNamedElement::class.java) }
+        val name = element?.let { e ->
+            com.intellij.ide.actions.QualifiedNameProvider.EP_NAME.extensionList.firstNotNullOfOrNull { it.getQualifiedName(e) }
+        } ?: file.virtualFile?.path
+        return buildJsonObject { if (name != null) put("name", name) }
     }
 
     private fun target(editor: com.intellij.openapi.editor.Editor, offset: Int): PsiElement? =

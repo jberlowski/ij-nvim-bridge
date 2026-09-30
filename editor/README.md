@@ -81,6 +81,7 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 | | `<leader>cG` | Gradle: the tasks as a hierarchy (project, group, task) | same |
 | | `<leader>cb` | Gradle: run the last task again | same |
 | | `<leader>cB` | Gradle: stop the running task | same |
+| | `<leader>cy` | Copy reference: the fully qualified name of the symbol under the cursor, into the clipboard (`:IjBridge copyref`) | Kotlin and Java buffers with an IntelliJ connection |
 | | `<leader>cs` | Gradle: sync (reload the Gradle projects; needed after adding a library) | same |
 | | `<leader>ce` | **Run Configuration: find and run it** (Gradle-backed ones only, so far) | same |
 | | `<leader>cE` | Run Configuration: run the last one again | same |

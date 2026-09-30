@@ -5,6 +5,7 @@
 --
 --   <leader>c   code           Gradle tasks: find and run (`cg`), the hierarchy (`cG`), run the last again (`cb`), stop (`cB`), sync (`cs`)
 --                              Run Configurations: find and run (`ce`), run the last again (`cE`), stop (`cK`)
+--                              copy reference (`cy`): the fully qualified name of the symbol under the cursor
 --   <leader>f   file/find      new file from an IntelliJ template (`fN`; `fn` is LazyVim's own New File)
 --   <leader>t   test           go to the test (`tg`); run nearest/class/file, repeat, stop (`tn`, `tc`, `tf`, `tR`, `tx`), the results tree and the raw log (`to`, `tl`)
 --   <leader>a   miscellaneous  state, opening the project, the keys, the logs
@@ -73,6 +74,8 @@ local function actions()
         end)
       end,
     },
+    { lhs = '<leader>cy', desc = 'Copy reference: the fully qualified name of the symbol', run = function() bridge().copy_reference() end,
+      when = 'connected', ft = M.jvm },
     -- code: Gradle tasks
     { lhs = '<leader>cg', desc = 'Gradle: find a task and run it', run = function() require('ij_bridge.tasks').pick() end,
       when = 'connected', ft = M.gradle },

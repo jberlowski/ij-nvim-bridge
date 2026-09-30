@@ -430,3 +430,23 @@ class TestChoicesAndNoOps:
                 titles.update(a["title"] for a in found)
         assert titles, "nothing was offered at all"
         assert not [t for t in titles if t.startswith(("Navigate to", "Copy "))], sorted(titles)
+
+
+class TestSuppress:
+    """"Suppress for statement / method / class" sit under the fix's arrow in IntelliJ's popup, not in its list."""
+
+    def test_java_offers_the_suppress_actions_for_a_warning(self, wire):
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        _, found = offered(wire, JAVA, JAVA_FIXABLE, "eq(String", 2, "Suppress for method")
+        titles = {a["title"] for a in found}
+        assert {"Suppress for method", "Suppress for class"} <= titles, titles
+
+    def test_suppressing_for_a_method_annotates_it(self, wire):
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        result, _ = applied(wire, JAVA, JAVA_FIXABLE, "eq(String", 2, "Suppress for method")
+        assert "@SuppressWarnings(" in result, result
+
+    def test_suppressing_for_a_statement_comments_it(self, wire):
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        result, _ = applied(wire, JAVA, JAVA_FIXABLE, "a == ", 4, "Suppress for statement")
+        assert "//noinspection" in result or "@SuppressWarnings(" in result, result

@@ -232,6 +232,7 @@ class BrainService(private val project: Project) : Disposable {
         })
         // Standard LSP navigation: Neovim's own gd, gy, gI, grr, K and highlights.
         put("definitionProvider", true)
+        put("declarationProvider", true)
         put("typeDefinitionProvider", true)
         put("implementationProvider", true)
         put("referencesProvider", true)
