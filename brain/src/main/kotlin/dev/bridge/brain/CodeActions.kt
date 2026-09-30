@@ -3,7 +3,9 @@ package dev.bridge.brain
 import com.intellij.application.options.CodeStyle
 import com.intellij.codeInsight.daemon.impl.ShowIntentionsPass
 import com.intellij.modcommand.ActionContext
+import com.intellij.modcommand.ModChooseAction
 import com.intellij.modcommand.ModCommand
+import com.intellij.modcommand.ModCommandAction
 import com.intellij.modcommand.ModCompositeCommand
 import com.intellij.modcommand.ModUpdateFileText
 import com.intellij.lang.LanguageImportStatements
@@ -111,6 +113,37 @@ class CodeActions(private val project: Project) {
     }
 
     /**
+     * What one offer stands for in the list. Each offer is run for its `ModCommand` (as resolving does, and still
+     * never executed), which answers two things a client cannot otherwise know:
+     *  - an action that offers *choices* ([ModChooseAction]: "Change visibility...", "Convert number to...") is
+     *    listed as one action per choice, since a code-action menu has no second step to choose in;
+     *  - an action whose whole effect is to move the caret, highlight or show a message changes no text, so it is
+     *    not listed ("Navigate to duplicate class" was offered, selectable, and did nothing).
+     * An offer that cannot be run here is listed as it is: resolving says why it cannot be applied.
+     */
+    private fun expand(offer: Offer, context: ActionContext): List<Offer> {
+        val command = runCatching { offer.action.perform(context) }.getOrNull() ?: return listOf(offer)
+        val choose = chooseOf(command)
+        if (choose == null) return if (changesNoText(command)) emptyList() else listOf(offer)
+        val parent = offer.title.trimEnd('…', ' ', '.')
+        return choose.actions().withIndex().mapNotNull { (i, choice) ->
+            val name = choice.getPresentation(context)?.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Offer(offer.kind, "${offer.key}#$i", "$parent: $name", choice)
+        }
+    }
+
+    /** The choices a command offers, when offering them is all it does. */
+    private fun chooseOf(command: ModCommand): ModChooseAction? = command.unpack().singleOrNull() as? ModChooseAction
+
+    /** Every step only moves the caret, highlights or shows something: nothing a text-edit client can apply. */
+    private fun changesNoText(command: ModCommand): Boolean = command.unpack().all(::isNoEditStep)
+
+    private fun isNoEditStep(step: ModCommand): Boolean =
+        step is com.intellij.modcommand.ModNavigate || step is com.intellij.modcommand.ModHighlight ||
+            step is com.intellij.modcommand.ModNothing || step is com.intellij.modcommand.ModDisplayMessage ||
+            step is com.intellij.modcommand.ModCopyToClipboard || step is com.intellij.modcommand.ModRegisterTabOut
+
+    /**
      * "Inline variable" (FEATURES.md's extract/inline/move): Java only so far. `InlineLocalHandler`
      * is not an intention - it is a refactoring handler, invoked from its own shortcut or menu, not
      * `ShowIntentionsPass` - but reproducing against the real IDE found it is already `ModCommand`-based
@@ -192,7 +225,8 @@ class CodeActions(private val project: Project) {
         if (only != null && only.isNotEmpty() && only.none { QUICK_FIX.startsWith(it) || REWRITE.startsWith(it) || it == "quickfix" }) {
             return emptyList()
         }
-        return offersAt(mirror).filter { wanted(it.kind, only) }.map { offer ->
+        val context = ActionContext.from(mirror.editor, PsiDocumentManager.getInstance(project).getPsiFile(mirror.document) ?: return emptyList())
+        return offersAt(mirror).filter { wanted(it.kind, only) }.flatMap { expand(it, context) }.map { offer ->
             buildJsonObject {
                 put("title", offer.title)
                 put("kind", offer.kind)
@@ -286,10 +320,17 @@ class CodeActions(private val project: Project) {
         val key = data["key"]?.jsonPrimitive?.contentOrNull ?: throw IllegalArgumentException("no key on the action")
         placeCaret(mirror, range)
         val changes = ReadAction.compute<Map<String, List<JsonObject>>, RuntimeException> {
-            val offer = offersAt(mirror).firstOrNull { it.key == key } ?: throw StaleAction()
+            // "key#2#0": the offer, then the third of its choices, then that one's first.
+            val steps = key.split('#')
+            val offer = offersAt(mirror).firstOrNull { it.key == steps[0] } ?: throw StaleAction()
             val file = PsiDocumentManager.getInstance(project).getPsiFile(mirror.document) ?: throw StaleAction()
-            val command = offer.action.perform(ActionContext.from(mirror.editor, file))
-            editsOf(command, mirror)
+            val context = ActionContext.from(mirror.editor, file)
+            var action: ModCommandAction = offer.action
+            for (choice in steps.drop(1)) {
+                val choose = chooseOf(action.perform(context)) ?: throw StaleAction()
+                action = choose.actions().getOrNull(choice.toInt()) ?: throw StaleAction()
+            }
+            editsOf(action.perform(context), mirror)
         }
         if (mirror.version != version && version != null) throw StaleAction()
         return buildJsonObject {
@@ -314,7 +355,8 @@ class CodeActions(private val project: Project) {
     /** What a command changes, as edits by file. What needs a person, or touches more than text, is refused, naming what. */
     private fun editsOf(command: ModCommand, mirror: Mirror): Map<String, List<JsonObject>> {
         val out = LinkedHashMap<String, MutableList<JsonObject>>()
-        for (step in command.unpack()) {
+        val steps = command.unpack()
+        for (step in steps) {
             when (step) {
                 is ModUpdateFileText -> {
                     val path = java.nio.file.Path.of(step.file().path)
@@ -324,13 +366,16 @@ class CodeActions(private val project: Project) {
                     if (current != null && current != step.oldText()) throw StaleAction()
                     out.getOrPut(uri) { ArrayList() } += TextEdits.diff(step.oldText(), step.newText())
                 }
-                // Where the caret goes, what to highlight, a message: nothing to change.
-                is com.intellij.modcommand.ModNavigate, is com.intellij.modcommand.ModHighlight,
-                is com.intellij.modcommand.ModNothing, is com.intellij.modcommand.ModDisplayMessage,
-                is com.intellij.modcommand.ModCopyToClipboard, is com.intellij.modcommand.ModRegisterTabOut -> Unit
                 is ModCompositeCommand -> Unit
-                else -> throw Rename.Refused("this action needs more than a text edit (${step.javaClass.simpleName}), which the Bridge cannot do yet")
+                // Where the caret goes, what to highlight, a message: nothing to change.
+                else -> if (!isNoEditStep(step)) {
+                    throw Rename.Refused("this action needs more than a text edit (${step.javaClass.simpleName}), which the Bridge cannot do yet")
+                }
             }
+        }
+        // Reporting success with nothing to apply reads as broken: say so instead.
+        if (out.isEmpty() && steps.isNotEmpty()) {
+            throw Rename.Refused("this action changes no text: it only navigates or shows something")
         }
         return out
     }

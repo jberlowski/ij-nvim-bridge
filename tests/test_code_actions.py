@@ -387,3 +387,46 @@ class TestQuickFixesThroughNeovim:
             time.sleep(3)
             return "list.isEmpty()" in "\n".join(nvim.current.buffer[:])
         wait_until(done, timeout=90, interval=2, message="the quick fix was never applied:\n" + "\n".join(nvim.current.buffer[:]))
+
+
+
+class TestChoicesAndNoOps:
+    """An action with choices is one action per choice; an action that only navigates is not offered."""
+
+    def test_an_action_with_choices_is_one_action_per_choice(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        _, found = offered(wire, KOTLIN, KOTLIN_FIXABLE, "fun c(", 0, "Change visibility: private")
+        titles = [a["title"] for a in found]
+        assert {"Change visibility: private", "Change visibility: protected", "Change visibility: internal"} <= set(titles), titles
+        assert not any(t.endswith("…") for t in titles), titles    # the parent, which alone asked a question
+
+    def test_a_choice_applies_its_own_edit(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        result, _ = applied(wire, KOTLIN, KOTLIN_FIXABLE, "fun c(", 0, "Change visibility: private")
+        assert "private fun c(" in result, result
+        result, _ = applied(wire, KOTLIN, KOTLIN_FIXABLE, "fun c(", 0, "Change visibility: internal")
+        assert "internal fun c(" in result, result
+
+    def test_a_choice_in_another_action_too(self, wire):
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        result, _ = applied(wire, JAVA, JAVA_FIXABLE, "int neverUsed = 3", 17, "Convert number to: Hex")
+        assert "int neverUsed = 0x3;" in result, result
+
+    def test_choices_are_offered_without_computing_the_edit(self, wire):
+        wire.did_open(KOTLIN, KOTLIN_FIXABLE)
+        _, found = offered(wire, KOTLIN, KOTLIN_FIXABLE, "fun c(", 0, "Change visibility: private")
+        assert all("edit" not in a for a in found)
+
+    def test_an_action_that_only_navigates_or_copies_is_not_offered(self, wire):
+        """"Navigate to duplicate class" was offered, selectable, and did nothing."""
+        wire.did_open(JAVA, JAVA_FIXABLE)
+        time.sleep(8)
+        titles = set()
+        for ln, line in enumerate(JAVA_FIXABLE.split("\n")):
+            for ch in range(0, len(line), 3):
+                pos = {"line": ln, "character": ch}
+                found = wire.request("textDocument/codeAction", {
+                    "textDocument": {"uri": uri(JAVA)}, "range": {"start": pos, "end": pos}, "context": {"diagnostics": []}}, timeout=90)
+                titles.update(a["title"] for a in found)
+        assert titles, "nothing was offered at all"
+        assert not [t for t in titles if t.startswith(("Navigate to", "Copy "))], sorted(titles)
