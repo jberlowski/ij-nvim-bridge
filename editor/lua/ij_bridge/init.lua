@@ -631,9 +631,19 @@ function M.setup(opts)
   M.opts = opts or {}
   local group = vim.api.nvim_create_augroup('IjBridge', { clear = true })
 
+  -- A clean buffer that was left is released once a *file* buffer takes over. Left for an explorer or
+  -- a terminal (nothing the IDE could show), it stays Mirrored and selected: releasing it closes its
+  -- tab, and IntelliJ then jumps to whichever tab is next.
+  local left
   vim.api.nvim_create_autocmd('BufEnter', {
     group = group,
     callback = function(args)
+      if buftype_ok(args.buf) then
+        if left and left ~= args.buf then
+          release_if_clean(left)
+        end
+        left = nil
+      end
       local was_attached = M.client(args.buf) ~= nil
       M.attach(args.buf)
       if was_attached then
@@ -644,7 +654,9 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd('BufLeave', {
     group = group,
     callback = function(args)
-      release_if_clean(args.buf)
+      if buftype_ok(args.buf) then
+        left = args.buf
+      end
     end,
   })
   -- A buffer saved while it is not the active one has just become clean.

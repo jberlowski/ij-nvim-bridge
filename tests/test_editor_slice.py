@@ -199,6 +199,24 @@ class TestDiagnostics:
         wait_until(lambda: mirrors(probe)["CrossFileConsumer.kt"]["showing"],
                    message="returning to the buffer did not select its Mirror")
 
+    @pytest.mark.parametrize("window", [
+        "hide enew | setlocal buftype=nofile",   # what an explorer window is
+        "hide terminal",                         # the terminal toggle (<C-/>)
+    ], ids=["explorer", "terminal"])
+    def test_a_window_with_no_file_leaves_the_ides_selection_alone(self, nvim, probe, window):
+        """An explorer or a terminal (any buffer with no file behind it) is not a file to show. Reported:
+        focusing one makes IntelliJ jump to some other file. The IDE must keep showing the last file's Mirror."""
+        nvim.command(f"edit {CONSUMER}")
+        nvim.current.buffer.append("// unsaved", 0)                  # keeps it Mirrored, hidden
+        nvim.command(f"hide edit {PRODUCER}")                        # clean: the active file
+        wait_until(lambda: mirrors(probe).get("CrossFileProducer.kt", {}).get("showing"),
+                   message="the active file's Mirror was never selected")
+        nvim.command(window)
+        time.sleep(3)                                               # let any release or refocus land
+        state = mirrors(probe)
+        assert "CrossFileProducer.kt" in state and state["CrossFileProducer.kt"]["showing"], state
+        assert not state["CrossFileConsumer.kt"]["showing"], state
+
 
 # ------------------------------------------------------------------- state
 class TestStatus:
