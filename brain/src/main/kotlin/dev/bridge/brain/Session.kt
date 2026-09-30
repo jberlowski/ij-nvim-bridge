@@ -204,6 +204,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     brain.gradle.list()
                 })
                 "\$/ij/task/run" -> reply(id, brain.gradle.run(params, transport))
+                "\$/ij/sync" -> reply(id, brain.gradle.sync(params, transport))
                 "\$/ij/task/cancel" -> reply(id, brain.gradle.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
                 // IntelliJ Run Configurations (FEATURES.md §6c): named, saved, possibly .run/-persisted.
                 "\$/ij/runConfigurations" -> reply(id, com.intellij.openapi.application.ReadAction.compute<JsonElement, RuntimeException> {

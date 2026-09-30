@@ -228,6 +228,30 @@ function M.on_finished(params)
   vim.api.nvim_exec_autocmds('User', { pattern = 'IjBridgeTaskFinished', modeline = false, data = params })
 end
 
+--- Reload the Gradle project(s), as IntelliJ's circle arrows do: needed after a library is added to a build script.
+function M.sync()
+  local c = client()
+  if not c then
+    return say('no IntelliJ is serving this buffer', vim.log.levels.WARN)
+  end
+  c:request('$/ij/sync', {}, function(err)
+    if err then
+      say('sync: ' .. (err.message or 'refused'), vim.log.levels.WARN)
+    else
+      say('Gradle sync started')
+    end
+  end)
+end
+
+function M.on_sync_finished(params)
+  local seconds = ('%.1fs'):format((params.ms or 0) / 1000)
+  if params.success then
+    say('Gradle sync finished in ' .. seconds)
+  else
+    say('Gradle sync failed after ' .. seconds .. (params.error and (': ' .. params.error) or ''), vim.log.levels.ERROR)
+  end
+end
+
 function M.stop()
   local c = client()
   if not c then

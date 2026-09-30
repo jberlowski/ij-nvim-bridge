@@ -2,7 +2,11 @@ package dev.bridge.brain
 
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.externalSystem.service.project.ExternalProjectRefreshCallback
+import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder
+import com.intellij.openapi.externalSystem.model.DataNode
 import com.intellij.openapi.externalSystem.model.ProjectKeys
+import com.intellij.openapi.externalSystem.model.project.ProjectData
 import com.intellij.openapi.externalSystem.model.ProjectSystemId
 import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExecutionSettings
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId
@@ -197,6 +201,59 @@ class GradleTasks(private val project: Project, private val brain: BrainService)
         } catch (_: Throwable) {
             // the Editor went away while it ran
         }
+    }
+
+    // ------------------------------------------------------------------ sync
+    private val syncing = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Reloads the Gradle project(s) - IntelliJ's own "Reload All Gradle Projects", the circle arrows in the Gradle tool
+     * window - so a library just added to `build.gradle.kts` is known. Answers at once with the paths being reloaded;
+     * the end follows as `$/ij/sync/finished` (`success`, `ms`, `error`). params: optional `path` (one linked project;
+     * default every linked one). One sync at a time.
+     */
+    fun sync(params: JsonObject, transport: Transport): JsonElement {
+        val linked = ExternalSystemApiUtil.getSettings(project, system).linkedProjectsSettings.map { it.externalProjectPath }
+        val paths = params["path"]?.jsonPrimitive?.contentOrNull?.let { listOf(it) } ?: linked
+        if (paths.isEmpty()) throw Rename.Refused("no Gradle project is linked to this IDE project")
+        if (!syncing.compareAndSet(false, true)) throw Rename.Refused("a Gradle sync is already running")
+
+        val started = System.nanoTime()
+        val remaining = java.util.concurrent.atomic.AtomicInteger(paths.size)
+        val failure = AtomicReference<String?>()
+        fun done(error: String?) {
+            if (error != null) failure.compareAndSet(null, error)
+            if (remaining.decrementAndGet() > 0) return
+            syncing.set(false)
+            val ms = (System.nanoTime() - started) / 1_000_000
+            brain.record.info(transport.session, "gradle_sync_finished") { put("ok", failure.get() == null); put("ms", ms) }
+            try {
+                transport.send(Wire.notification("\$/ij/sync/finished", buildJsonObject {
+                    put("success", failure.get() == null)
+                    put("ms", ms)
+                    failure.get()?.let { put("error", it) }
+                }))
+            } catch (_: Throwable) {
+                // the Editor went away while it ran
+            }
+        }
+        brain.record.info(transport.session, "gradle_sync") { put("paths", paths.joinToString(" ")) }
+        ApplicationManager.getApplication().invokeLater {
+            for (path in paths) {
+                try {
+                    ExternalSystemUtil.refreshProject(path, ImportSpecBuilder(project, system)
+                        .use(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
+                        .callback(object : ExternalProjectRefreshCallback {
+                            override fun onSuccess(externalProject: DataNode<ProjectData>?) = done(null)
+                            override fun onFailure(errorMessage: String, errorDetails: String?) = done(errorMessage)
+                        }))
+                } catch (t: Throwable) {
+                    brain.record.error(transport.session, "gradle sync", t)
+                    done("${t::class.java.simpleName}: ${t.message}")
+                }
+            }
+        }
+        return buildJsonObject { put("paths", JsonArray(paths.map(::JsonPrimitive))) }
     }
 
     /** Stops the running task, if [runId] is it (or there is one and none is named). */

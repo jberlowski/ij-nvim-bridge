@@ -74,6 +74,16 @@ class TestListing:
         assert project["projects"] == []
 
 
+class TestSync:
+
+    def test_a_sync_reloads_the_project_and_says_when_it_ended(self, wire):
+        started = wire.request("$/ij/sync", {}, timeout=60)
+        assert started["paths"] == [ROOT], started
+        done = wire.notifications("$/ij/sync/finished", until=lambda p: True, timeout=300)[0]
+        assert done["success"] is True, done
+        assert listing(wire)["projects"], "the model was empty after a sync"
+
+
 class TestRunning:
 
     def test_a_task_runs_and_its_output_streams_back(self, wire):
