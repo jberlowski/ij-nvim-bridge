@@ -108,7 +108,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     reply(id, buildJsonObject {
                         put("capabilities", brain.capabilities())
                         put("serverInfo", buildJsonObject {
-                            put("name", "ij-nvim-bridge"); put("version", "0.1.0")
+                            put("name", "ij-nvim-bridge"); put("version", pluginVersion())
                             put("session", this@Session.id)
                             brain.record.path?.let { put("log", it.toString()) }
                         })
@@ -290,6 +290,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
         if (!brain.record.enabled(BridgeLog.Level.DEBUG)) return
         brain.record.debug(this.id, "recv") {
             put("method", method)
+            put("bytes", Wire.lastLength.get())
             if (id != null) put("id", id)
             val doc = params["textDocument"] as? JsonObject
             (doc?.get("uri") ?: (params["data"] as? JsonObject)?.get("uri"))?.let { put("uri", it) }

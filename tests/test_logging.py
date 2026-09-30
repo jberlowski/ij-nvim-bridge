@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from conftest import BRAIN_VERSION
 from harness.util import wait_until
 from harness.wire import SRC, Wire, replace_range, uri
 from test_editor_slice import attached
@@ -141,7 +142,7 @@ class TestBrainLog:
             pytest.skip("the start of this Brain has been rotated out of the log")
         start = starts[0]
         assert start["root"] == "/work/fixture" and start["socket"].endswith(".sock")
-        assert start["java"] and start["os"] and start["plugin"] == "0.1.0"
+        assert start["java"] and start["os"] and start["plugin"] == BRAIN_VERSION
 
     def test_the_file_is_private(self, bridge_container, path):
         mode = bridge_container.exec(f"stat -c %a {path}").stdout.strip()

@@ -121,7 +121,7 @@ class BrainService(private val project: Project) : Disposable {
             put("root", root)
             put("socket", path.toString())
             put("ide", ide())
-            put("plugin", "0.1.0")
+            put("plugin", pluginVersion())
             put("java", System.getProperty("java.version") ?: "?")
             put("os", "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")
             put("level", record.level.name.lowercase())
@@ -318,3 +318,7 @@ class BrainService(private val project: Project) : Disposable {
         MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
             .take(3).joinToString("") { "%02x".format(it) }
 }
+
+/** The Brain's own version, from its plugin descriptor: `version` in `brain/build.gradle.kts` is the one place it is written. */
+fun pluginVersion(): String =
+    com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId("dev.bridge.brain"))?.version ?: "unknown"

@@ -8,6 +8,7 @@ asking for `fresh_container`.
 from __future__ import annotations
 
 import os
+import re
 import time
 import shutil
 from pathlib import Path
@@ -23,7 +24,9 @@ from harness.ide import Ide
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = REPO_ROOT / "tests" / "artifacts"
 CANARY_ZIP = REPO_ROOT / "canary" / "build" / "distributions" / "canary-0.1.0.zip"
-BRAIN_ZIP = REPO_ROOT / "brain" / "build" / "distributions" / "brain-0.1.0.zip"
+# The one place the Brain's version is written is its build file; the zip is named after it.
+BRAIN_VERSION = re.search(r'^version = "([^"]+)"', (REPO_ROOT / "brain" / "build.gradle.kts").read_text(), re.M).group(1)
+BRAIN_ZIP = REPO_ROOT / "brain" / "build" / "distributions" / f"brain-{BRAIN_VERSION}.zip"
 FIXTURE_PROJECT = "/work/fixture"
 
 

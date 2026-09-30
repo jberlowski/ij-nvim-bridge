@@ -30,7 +30,7 @@ liveness probe, see HARNESS.md §4). Both build the same way.
 ```
 cd brain
 ./gradlew buildPlugin -PlocalIdePath="/path/to/your/IntelliJ IDEA install"
-# -> build/distributions/brain-0.1.0.zip
+# -> build/distributions/brain-<version>.zip (`version` in brain/build.gradle.kts)
 ```
 
 The install path is almost never the same across machines (a Toolbox install lives under the

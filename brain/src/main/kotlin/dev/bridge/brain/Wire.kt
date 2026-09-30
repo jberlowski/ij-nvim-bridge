@@ -21,6 +21,9 @@ import java.nio.charset.StandardCharsets
 object Wire {
     val json = Json { ignoreUnknownKeys = true }
 
+    /** The size in bytes of the message this thread last read (each Session has a reader thread of its own): for the log. */
+    val lastLength: ThreadLocal<Int> = ThreadLocal.withInitial { 0 }
+
     /** Blocks for the next message; null at end of stream. */
     fun read(input: InputStream): JsonObject? {
         var length = -1
@@ -40,6 +43,7 @@ object Wire {
             if (n < 0) return null
             got += n
         }
+        lastLength.set(length)
         return json.parseToJsonElement(String(body, StandardCharsets.UTF_8)).jsonObject
     }
 
@@ -115,6 +119,7 @@ class Transport(private val out: OutputStream, val session: String = "-", privat
                 val params = message["params"] as? JsonObject
                 log.debug(session, "send") {
                     put("method", method)
+                    put("bytes", bytes)
                     params?.get("uri")?.let { put("uri", it) }
                     (params?.get("items") as? kotlinx.serialization.json.JsonArray)?.let { put("items", it.size) }
                     (params?.get("diagnostics") as? kotlinx.serialization.json.JsonArray)?.let { put("diagnostics", it.size) }

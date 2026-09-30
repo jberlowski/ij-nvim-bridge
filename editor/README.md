@@ -14,7 +14,7 @@ Two halves, set up once each. Neither depends on the other's setup order.
 
 Build it (see [BUILD.md](../BUILD.md) if you have not), then in IntelliJ IDEA:
 **Settings → Plugins → the gear icon → Install Plugin from Disk...** and pick
-`brain/build/distributions/brain-0.1.0.zip`. Restart the IDE if it asks. Nothing
+`brain/build/distributions/brain-<version>.zip`. Restart the IDE if it asks. Nothing
 else to configure: the Brain starts serving the open project automatically, on a
 private per-project socket (`$XDG_RUNTIME_DIR/ij-nvim-bridge/`), the moment the
 project has finished loading. Open the project(s) you want Neovim to reach.
