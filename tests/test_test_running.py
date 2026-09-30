@@ -49,6 +49,23 @@ class TestCapability:
             assert w.initialize()["capabilities"]["testRunning"] is True
 
 
+def runnables_within(w, path, seconds: float) -> list[dict]:
+    """The `$/ij/runnables` notices for `path` in the next `seconds`: none is an answer, not a timeout."""
+    out = [m["params"] for m in w.inbox if m.get("method") == "$/ij/runnables" and m["params"]["uri"] == uri(path)]
+    w.inbox = [m for m in w.inbox if not (m.get("method") == "$/ij/runnables" and m["params"]["uri"] == uri(path))]
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            msg = w.read(max(0.2, min(1.0, deadline - time.monotonic())))
+        except TimeoutError:
+            continue
+        if msg.get("method") == "$/ij/runnables" and msg["params"]["uri"] == uri(path):
+            out.append(msg["params"])
+        else:
+            w.inbox.append(msg)
+    return out
+
+
 class TestRunnables:
     """What can be run, harvested from IntelliJ's own gutter markers - the sign column's data."""
 
@@ -77,6 +94,37 @@ class TestRunnables:
         markers = wire.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC_TEST) and p["runnables"], timeout=20)
         assert markers and markers[-1]["runnables"], "no markers were published for a file opened a second time"
 
+    def test_unchanged_markers_are_not_sent_again(self, bridge_container, wire):
+        """Ten saves of one file sent twenty identical lists. Same markers, no message."""
+        ready(wire)
+        texts = mirror(wire, bridge_container, CALC_TEST)
+        wire.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC_TEST) and p["runnables"], timeout=60)
+        end = len(texts[CALC_TEST].split("\n")) - 1
+        for version in (1, 2, 3):                                        # edits after the markers: nothing moves
+            wire.did_change(CALC_TEST, version, {"range": {"start": {"line": end, "character": 0}, "end": {"line": end, "character": 0}},
+                                                 "text": f"// edit {version}\n"})
+            time.sleep(1.5)
+        assert runnables_within(wire, CALC_TEST, 4) == []
+
+    def test_a_file_with_no_markers_is_never_told_so(self, bridge_container, wire):
+        """There is nothing for the Editor to take away from a file that never had any."""
+        ready(wire)
+        texts = mirror(wire, bridge_container, CALC)
+        wire.did_change(CALC, 1, {"text": texts[CALC]})
+        assert runnables_within(wire, CALC, 10) == []
+
+    def test_a_second_editor_opening_an_open_file_is_sent_its_markers(self, bridge_container, wire, bridge):
+        from harness.wire import Wire
+        ready(wire)
+        texts = mirror(wire, bridge_container, CALC_TEST)
+        wire.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC_TEST) and p["runnables"], timeout=60)
+        with Wire(bridge.port) as other:
+            other.initialize()
+            other.did_open(CALC_TEST, texts[CALC_TEST])
+            got = other.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC_TEST) and p["runnables"], timeout=30)
+            assert got and got[-1]["runnables"], "the second Editor was never told what can be run"
+            other.did_close(CALC_TEST)
+
     def test_java_class_and_method_markers(self, bridge_container, wire):
         ready(wire)
         mirror(wire, bridge_container, MULT_TEST)
@@ -91,7 +139,7 @@ class TestRunnables:
         ready(wire)
         texts = mirror(wire, bridge_container, CALC)
         wire.did_change(CALC, 1, {"text": texts[CALC]})  # force a fresh daemon pass on this Mirror
-        empty_or_none = wire.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC), timeout=30)
+        empty_or_none = runnables_within(wire, CALC, 12)
         assert not empty_or_none or empty_or_none[-1]["runnables"] == []
 
 

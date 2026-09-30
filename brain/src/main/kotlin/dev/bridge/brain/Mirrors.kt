@@ -185,6 +185,7 @@ class MirrorSet(private val project: Project) : Disposable {
             // overwrite it, and nothing could put it back. Two editors editing
             // one file at once is not supported.
             existing.owners += owner
+            runCatching { onClaimed?.invoke(uri) }
             return
         }
         val file = resolve(uri) ?: throw IllegalArgumentException("no file for $uri")
@@ -206,6 +207,7 @@ class MirrorSet(private val project: Project) : Disposable {
         MirroredFiles.add(file)
         mirrors[uri] = mirror
         edt { foreign.watch(mirror) }
+        runCatching { onClaimed?.invoke(uri) }
         runCatching { onOpened?.invoke(mirror) }   // a watcher failing must never fail an open
     }
 
@@ -283,6 +285,9 @@ class MirrorSet(private val project: Project) : Disposable {
 
     /** Called when a Mirror gets an editor, and again when it gets a new one (a tab was evicted). */
     @Volatile var onOpened: ((Mirror) -> Unit)? = null
+
+    /** Called whenever a Session opens a file, for a new Mirror or one that already exists: what is owed it is sent again. */
+    @Volatile var onClaimed: ((String) -> Unit)? = null
 
     /** Called when a Mirror is released. */
     @Volatile var onReleased: ((String) -> Unit)? = null

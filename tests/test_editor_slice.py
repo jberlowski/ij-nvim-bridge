@@ -228,6 +228,7 @@ class TestDiagnosticLevel:
     def test_hiding_and_showing_by_level(self, nvim):
         nvim.command(f"edit {PRODUCER}")
         wait_until(lambda: attached(nvim) == 1, message="the buffer never attached")
+        time.sleep(8)          # IntelliJ's own first publish for the file lands in this window: not in the middle of the check
         nvim.exec_lua("""
             local uri = vim.uri_from_bufnr(0)
             local function d(sev, msg)

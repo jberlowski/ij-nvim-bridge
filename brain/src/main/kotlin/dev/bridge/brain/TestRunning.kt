@@ -60,6 +60,8 @@ class RunnablesPublisher(private val project: Project, private val brain: BrainS
         Thread(r, "bridge-runnables").apply { isDaemon = true }
     }
     private val pending = ConcurrentHashMap<String, ScheduledFuture<*>>()
+    /** What each file's markers were when last sent: the same list is not sent again. */
+    private val lastPublished = ConcurrentHashMap<String, JsonArray>()
 
     init {
         project.messageBus.connect(this).subscribe(
@@ -82,9 +84,16 @@ class RunnablesPublisher(private val project: Project, private val brain: BrainS
         }
     }
 
+    /** An Editor has just opened this file (a Mirror may already exist): whatever it is owed is sent again. */
+    fun resend(uri: String) {
+        lastPublished.remove(uri)
+        schedule(uri)
+    }
+
     fun clear(uri: String) {
         pending.remove(uri)?.cancel(false)
-        send(uri, JsonArray(emptyList()))
+        // Nothing was ever sent, so there is nothing for the Editor to take away.
+        if (lastPublished.remove(uri) != null) send(uri, JsonArray(emptyList()))
     }
 
     private fun publish(uri: String) {
@@ -92,6 +101,9 @@ class RunnablesPublisher(private val project: Project, private val brain: BrainS
             val mirror = brain.mirrors.get(uri) ?: return
             if (brain.state() != "Ready") return
             val runnables = ApplicationManager.getApplication().runReadAction<JsonArray> { collect(mirror) }
+            val before = lastPublished.put(uri, runnables)
+            // Unchanged is not news, and a file with no markers never had any to take back: most files.
+            if (before == runnables || (before == null && runnables.isEmpty())) return
             send(uri, runnables)
         } catch (t: Throwable) {
             log.warn("bridge: publishing runnables for $uri failed", t)

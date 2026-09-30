@@ -70,6 +70,7 @@ class BrainService(private val project: Project) : Disposable {
     }
 
     init {
+        mirrors.onClaimed = { uri -> runnables.resend(uri) }
         mirrors.onGone = { uri, owners, why ->
             diagnostics.clear(uri); runnables.clear(uri)
             record.info(null, "file_gone") { put("uri", uri); put("why", why) }
