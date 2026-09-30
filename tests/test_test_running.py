@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from harness.util import wait_until
 from harness.wire import RpcError, SRC, uri
 from test_navigation import at, mirror, ready
 
@@ -62,6 +63,19 @@ class TestRunnables:
         assert by_name["addsTwoNumbers"]["kind"] == "method"
         assert by_name["subtractsTwoNumbers"]["kind"] == "method"
         assert all("Run Test" in m["title"] and "  " not in m["title"] for m in markers)
+
+    def test_opening_a_file_again_publishes_its_markers_again(self, bridge_container, wire):
+        """The daemon analyses a file once: opening it a second time (a buffer entered again, a second Editor) gets no
+        new analysis to be told about, and the signs were never sent for it. Opening a file must publish what is known."""
+        ready(wire)
+        mirror(wire, bridge_container, CALC_TEST)
+        wire.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC_TEST) and p["runnables"], timeout=60)
+        wire.did_close(CALC_TEST)
+        wait_until(lambda: not any(m["uri"] == uri(CALC_TEST) for m in wire.debug_state()["mirrors"]), message="not released")
+        wire.inbox.clear()
+        mirror(wire, bridge_container, CALC_TEST)
+        markers = wire.notifications("$/ij/runnables", until=lambda p: p["uri"] == uri(CALC_TEST) and p["runnables"], timeout=20)
+        assert markers and markers[-1]["runnables"], "no markers were published for a file opened a second time"
 
     def test_java_class_and_method_markers(self, bridge_container, wire):
         ready(wire)
@@ -196,6 +210,10 @@ class TestThroughNeovim:
         text = "\n".join(nvim.current.buffer[:])
         line, col = at(text, "fun deliberatelyWrong", 0, 4)
         nvim.current.window.cursor = (line + 1, col)
+        wait_until(lambda: nvim.exec_lua("""
+            local state = require('ij_bridge.runnables').state[vim.api.nvim_get_current_buf()]
+            return state ~= nil and state.marks['deliberatelyWrong'] ~= nil"""), timeout=60,
+                   message="the run signs were never published for this file")
         wait_until(lambda: nvim.exec_lua("""
                 for _, m in ipairs(vim.api.nvim_buf_get_keymap(0, 'n')) do
                   if m.lhs:sub(-2) == 'tn' then return true end

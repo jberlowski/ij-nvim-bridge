@@ -184,6 +184,11 @@ class TestRunner(private val project: Project, private val brain: BrainService) 
         @Volatile var failure: String? = null
         @Volatile var succeeded = false
         val finished = AtomicBoolean(false)
+        val output = OutputBatcher { text, stdout ->
+            transport.send(Wire.notification("\$/ij/run/output", buildJsonObject {
+                put("runId", id); put("text", text); put("stdout", stdout)
+            }))
+        }
     }
 
     private val current = AtomicReference<Run?>()
@@ -255,11 +260,7 @@ class TestRunner(private val project: Project, private val brain: BrainService) 
         val listener = object : ExternalSystemTaskNotificationListener {
             override fun onStart(id: ExternalSystemTaskId) { run.taskId = id }
             override fun onStart(id: ExternalSystemTaskId, workingDir: String?) { run.taskId = id }
-            override fun onTaskOutput(id: ExternalSystemTaskId, text: String, stdOut: Boolean) {
-                run.transport.send(Wire.notification("\$/ij/run/output", buildJsonObject {
-                    put("runId", run.id); put("text", text); put("stdout", stdOut)
-                }))
-            }
+            override fun onTaskOutput(id: ExternalSystemTaskId, text: String, stdOut: Boolean) = run.output.add(text, stdOut)
             override fun onSuccess(id: ExternalSystemTaskId) { run.succeeded = true }
             override fun onFailure(id: ExternalSystemTaskId, e: Exception) { run.failure = e.message ?: e::class.java.simpleName }
             override fun onCancel(id: ExternalSystemTaskId) { run.cancelled = true }
@@ -366,6 +367,7 @@ class TestRunner(private val project: Project, private val brain: BrainService) 
 
     private fun finish(run: Run) {
         if (!run.finished.compareAndSet(false, true)) return
+        run.output.flush() // every line before the end
         current.compareAndSet(run, null)
         val ms = (System.nanoTime() - run.started) / 1_000_000
         brain.record.info(run.transport.session, "test_run_finished") {

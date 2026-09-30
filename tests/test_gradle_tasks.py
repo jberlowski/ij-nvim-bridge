@@ -93,6 +93,16 @@ class TestRunning:
         assert finished["success"] is True and finished["cancelled"] is False and finished["ms"] > 0
         assert all(o["stdout"] in (True, False) for o in output)
 
+    def test_output_arrives_in_a_few_batches_not_a_message_per_piece(self, wire):
+        """A small test run was 8,329 notifications for 2 MB: about 400 a second, each mostly envelope."""
+        started = wire.request("$/ij/task/run", {"path": ROOT, "tasks": ["tasks"], "args": ["--all"]}, timeout=60)
+        output, finished = collect(wire, started["runId"])
+        text = text_of(output)
+        lines = text.count("\n")
+        assert finished["success"] is True and lines > 50, (finished, lines)
+        assert len(output) <= max(3, lines // 4), f"{len(output)} messages for {lines} lines"
+        assert text.index("Tasks runnable from root project") < text.index("BUILD SUCCESSFUL")      # in order
+
     def test_the_end_comes_after_all_the_output(self, wire):
         started = wire.request("$/ij/task/run", {"path": ROOT, "tasks": ["help"]}, timeout=60)
         order = []
@@ -103,7 +113,7 @@ class TestRunning:
                 order.append(msg["method"])
                 if msg["method"] == "$/ij/task/finished":
                     break
-        assert order[-1] == "$/ij/task/finished" and order.count("$/ij/task/finished") == 1 and len(order) > 2, order[-5:]
+        assert order[-1] == "$/ij/task/finished" and order.count("$/ij/task/finished") == 1 and len(order) >= 2, order[-5:]   # output (batched), then the end
 
     def test_a_task_that_does_not_exist_fails_and_says_so(self, wire):
         _, output, finished = run_task(wire, ["thisTaskDoesNotExist"])
