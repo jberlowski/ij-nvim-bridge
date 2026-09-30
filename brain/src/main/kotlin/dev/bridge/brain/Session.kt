@@ -33,6 +33,9 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
     private val transport = Transport(Channels.newOutputStream(conn), id, brain.record)
     private var count = 0L
 
+    /** Opt-in caret following (Carets.kt): set by `$/ij/follow`, off until the Editor says otherwise. */
+    @Volatile var followCaret = false
+
     // Requests the Brain makes of the Editor (`workspace/applyEdit`), and what to do with each reply.
     private val replies = java.util.concurrent.ConcurrentHashMap<String, (JsonObject) -> Unit>()
     private val requestIds = java.util.concurrent.atomic.AtomicLong()
@@ -124,6 +127,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     val doc = params.obj("textDocument")
                     brain.mirrors.change(doc.str("uri"), doc.int("version"),
                         params["contentChanges"]?.jsonArray ?: JsonArray(emptyList()))
+                    brain.mirrors.get(doc.str("uri"))?.let { brain.carets.applyWanted(it) }
                 }
                 // SPEC.md §5.4: the Editor's "await Brain ack of version N" before it
                 // writes. Messages are handled in order, so by the time this reply
@@ -149,6 +153,15 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                 }
                 in NavigationEngine.METHODS -> brain.navigation.submit(method, id, params, transport)
                 "\$/cancelRequest" -> brain.navigation.cancel(params["id"])
+                // Caret following (FEATURES.md §6d), opt-in.
+                "\$/ij/follow" -> followCaret = params["enabled"]?.jsonPrimitive?.booleanOrNull == true
+                "\$/ij/caret" -> brain.carets.fromEditor(this, params)
+                "\$/ij/debug/caret" -> {
+                    // What the developer clicking in the IDE window does: not the Brain's own move.
+                    val m = brain.mirrors.get(params.str("uri")) ?: throw IllegalArgumentException("not mirrored")
+                    edt { m.editor.caretModel.moveToOffset(MirrorSet.offset(m.document, params)) }
+                    reply(id, JsonNull)
+                }
                 // The Editor's active buffer changed (FEATURES.md §9).
                 "\$/ij/focus" -> brain.mirrors.select(params.obj("textDocument").str("uri"))
 
@@ -324,6 +337,10 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     put("open", brain.mirrors.isOpen(m))
                     put("showing", edt { m.editor.contentComponent.isShowing })
                     put("length", edt { m.document.textLength })
+                    put("caret", edt { Locations.position(m.document, m.editor.caretModel.offset) })
+                    put("owners", m.owners.size)
+                    put("foreignBase", m.base != null)
+                    put("foreignPending", m.pending != null)
                     if (withText) put("text", edt { m.document.charsSequence.toString() })
                 }
             }))

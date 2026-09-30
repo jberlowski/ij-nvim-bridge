@@ -158,7 +158,7 @@ class CompletionEngine(private val project: Project, private val record: BridgeL
                 val doc = mirror.document
                 val at = MirrorSet.offset(doc, r.position)
                 site = Site(r.uri, doc.text, at, r.streamId)
-                mirror.editor.caretModel.moveToOffset(at)
+                mirror.moveCaret(at)
                 FinishHandler { finished.set(it) }.invokeCompletion(project, mirror.editor)
                 snapshot(mirror.editor, sent, finished.get(), site)
             }

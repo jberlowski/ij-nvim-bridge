@@ -34,6 +34,7 @@ MISC = {
     "lb": "Open the Brain log",
     "lr": "Gather a bug report",
     "lv": "Set the log level",
+    "F": "Toggle caret following (the cursor and IntelliJ's caret move together)",
 }
 SECTIONS = {
     "<leader>cg": "Gradle: find a task and run it",

@@ -47,6 +47,21 @@ class Mirror(
     @Volatile var pending: Forward? = null
     var listener: com.intellij.openapi.editor.event.DocumentListener? = null
 
+    // Caret following (Carets.kt).
+    /** Above zero while the Brain moves the caret itself: that is not the developer's movement. */
+    @Volatile var brainMoves: Int = 0
+    /** A caret from the Editor for a version the Mirror has not reached yet: (version, position). */
+    @Volatile var wanted: Pair<Int, JsonObject>? = null
+
+    /** Move the caret as the Brain (to answer a request); on the EDT. Never reported to the Editor as a movement. */
+    fun moveCaret(offset: Int) = byBrain { editor.caretModel.moveToOffset(offset) }
+
+    /** Anything the Brain does to the editor's caret or selection, on the EDT, is marked so it is not taken for the developer's. */
+    fun <T> byBrain(block: () -> T): T {
+        brainMoves++
+        try { return block() } finally { brainMoves-- }
+    }
+
     /**
      * The Sessions that have this buffer open. A Mirror belongs to the project,
      * but a Session's claim on it must not outlive the Session, and must not be

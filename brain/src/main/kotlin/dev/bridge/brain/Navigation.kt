@@ -127,7 +127,7 @@ class NavigationEngine(private val project: Project, private val brain: BrainSer
                 if (method == "textDocument/signatureHelp") {
                     // Some parameter-info handlers read the caret, not the offset they are given.
                     val at = MirrorSet.offset(mirror!!.document, params["position"]!!.jsonObject)
-                    edt { mirror.editor.caretModel.moveToOffset(at) }
+                    edt { mirror.moveCaret(at) }
                 }
                 val result = if (method in EDITING) {
                     // A write action on the EDT: never from inside a read action.

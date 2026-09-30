@@ -62,10 +62,11 @@ class BrainService(private val project: Project) : Disposable {
     val runConfigurations = RunConfigurations(project, this)
     val runnables = RunnablesPublisher(project, this).also { Disposer.register(this, it) }
     val testRunner = TestRunner(project, this)
+    val carets = CaretFollower(this).also { Disposer.register(this, it) }
     val inlayHints = InlayHints(project, this).also {
         Disposer.register(this, it)
-        mirrors.onOpened = { m -> it.watch(m) }
-        mirrors.onReleased = { uri -> it.unwatch(uri) }
+        mirrors.onOpened = { m -> it.watch(m); carets.watch(m) }
+        mirrors.onReleased = { uri -> it.unwatch(uri); carets.unwatch(uri) }
     }
 
     init {

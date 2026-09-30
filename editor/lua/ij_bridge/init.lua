@@ -188,6 +188,9 @@ local function connect(buf, entry)
       ['$/ij/run/finished'] = function(_, params)
         require('ij_bridge.test_run').on_finished(params)
       end,
+      ['$/ij/caret'] = function(_, params)
+        require('ij_bridge.caret').on_caret(params)
+      end,
       ['$/ij/status'] = function(_, params, ctx)
         if params then
           require('ij_bridge').on_status(ctx.client_id, params)
@@ -200,6 +203,7 @@ local function connect(buf, entry)
     on_init = function(client, result)
       local info = result and result.serverInfo or {}
       M.sessions[client.id] = info
+      require('ij_bridge.caret').on_client(client)
       log.info('session', { client = client.id, session = info.session, brain_log = info.log, brain = info.version })
     end,
     on_error = function(code, err)
@@ -665,9 +669,12 @@ function M.report()
   return out
 end
 
---- @param opts? { prefix?: string, keys?: boolean, sections?: boolean, idea_cmd?: string, open_timeout?: integer, min_severity?: 'error'|'warn'|'info'|'hint' } `min_severity` (default `hint`: everything the Brain sends) hides diagnostics less severe than it; `:IjBridge diagnostics <level>` changes it while running. Miscellaneous keys under `prefix` (default `<leader>a`), the others by section (`sections = false` to skip them); `keys = false` binds nothing. `idea_cmd` (default `idea`, or the `IJ_NVIM_BRIDGE_IDEA_CMD` environment variable if that is set): the command `:IjBridge open` runs to start IntelliJ. The environment variable is the better place for it when `init.lua` is shared across machines, since the right value (a Toolbox script, a `.app` bundle's launcher) is often machine- or user-specific.
+--- @param opts? { prefix?: string, keys?: boolean, sections?: boolean, idea_cmd?: string, open_timeout?: integer, min_severity?: 'error'|'warn'|'info'|'hint', follow_caret?: boolean } `follow_caret` (default `false`) makes the cursor and IntelliJ's caret follow each other, both ways (`:IjBridge follow on|off`, `<leader>aF`). `min_severity` (default `hint`: everything the Brain sends) hides diagnostics less severe than it; `:IjBridge diagnostics <level>` changes it while running. Miscellaneous keys under `prefix` (default `<leader>a`), the others by section (`sections = false` to skip them); `keys = false` binds nothing. `idea_cmd` (default `idea`, or the `IJ_NVIM_BRIDGE_IDEA_CMD` environment variable if that is set): the command `:IjBridge open` runs to start IntelliJ. The environment variable is the better place for it when `init.lua` is shared across machines, since the right value (a Toolbox script, a `.app` bundle's launcher) is often machine- or user-specific.
 function M.setup(opts)
   M.opts = opts or {}
+  if M.opts.follow_caret then
+    require('ij_bridge.caret').enable(true)
+  end
   if M.opts.min_severity and not require('ij_bridge.diagnostics').set_level(M.opts.min_severity) then
     print('ij-bridge: unknown min_severity ' .. tostring(M.opts.min_severity) .. ' (error, warn, info, hint)')
   end
@@ -688,6 +695,7 @@ function M.setup(opts)
       end
       local was_attached = M.client(args.buf) ~= nil
       M.attach(args.buf)
+      require('ij_bridge.caret').touch(args.buf) -- a buffer just entered: where its cursor is
       if was_attached then
         focus(args.buf)
       end
@@ -758,6 +766,15 @@ function M.setup(opts)
       else
         print('ij-bridge: unknown level ' .. rest .. ' (error, warn, info, hint)')
       end
+    elseif sub == 'follow' then
+      local caret = require('ij_bridge.caret')
+      if rest == 'on' or rest == 'off' then
+        caret.enable(rest == 'on')
+      elseif rest ~= '' then
+        print('ij-bridge: follow takes on or off')
+        return
+      end
+      print('ij-bridge: caret following is ' .. (caret.enabled and 'on' or 'off'))
     elseif sub == 'copyref' then
       M.copy_reference()
     elseif sub == 'report' then
@@ -781,12 +798,12 @@ function M.setup(opts)
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint|list], report, copyref, new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint|list], report, copyref, follow [on|off], new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
     end
   end, {
     nargs = '?',
     complete = function()
-      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'diagnostics', 'report', 'copyref', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat', 'sync' }
+      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'diagnostics', 'report', 'copyref', 'follow', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat', 'sync' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })

@@ -92,7 +92,7 @@ $/ij/completionItems     notification  S→C, subsequent batches
 $/ij/completionCancel    notification  C→S, abandon a stream
 $/ij/status              notification  S→C, Brain state (§8)
 $/ij/focus               notification  C→S, the Editor's active buffer changed (§9)
-$/ij/caret               notification  S→C, Mirror caret — debug only (§9)
+$/ij/caret               notification  both ways, opt-in caret following (FEATURES.md §6d); $/ij/follow C→S turns it on
 $/ij/debug/state         request       harness introspection (§9)
 ```
 
@@ -280,7 +280,9 @@ Inspections alone are insufficient: *cannot resolve symbol*, syntax errors and t
 Exists for the harness and for development. Not a user feature in v1.
 
 ```
-$/ij/caret        S→C  { uri, position }      Mirror caret moved
+$/ij/caret        S→C  { uri, version, position }  the developer moved the Mirror's caret in the IDE (opt-in)
+$/ij/caret        C→S  { textDocument, version, position }  the Editor's cursor moved (opt-in, debounced ~100 ms)
+$/ij/follow       C→S  { enabled }            opt in or out of caret following for this Session
 $/ij/debug/state  req  → { project, capabilities, state, evictions, lookupActive,
                            mirrors: [{ uri, version, convergent, open, length }] }
 $/ij/debug/setTabLimit · saveAll   harness-only levers (provoke the tab limit; do what an idle IDE does)

@@ -353,8 +353,10 @@ class CodeActions(private val project: Project) {
         val start = MirrorSet.offset(mirror.document, range["start"]!!.jsonObject)
         val end = MirrorSet.offset(mirror.document, range["end"]!!.jsonObject)
         edt {
-            mirror.editor.caretModel.moveToOffset(start)
-            if (end > start) mirror.editor.selectionModel.setSelection(start, end) else mirror.editor.selectionModel.removeSelection()
+            mirror.byBrain {
+                mirror.editor.caretModel.moveToOffset(start)
+                if (end > start) mirror.editor.selectionModel.setSelection(start, end) else mirror.editor.selectionModel.removeSelection()
+            }
         }
     }
 

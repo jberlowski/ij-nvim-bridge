@@ -59,6 +59,8 @@ local function actions()
     -- miscellaneous
     { misc = 'i', desc = 'State of this buffer', run = function() bridge().show_status() end },
     { misc = 'o', desc = 'Open the project in IntelliJ (start it if none is)', run = function() bridge().open_ide() end },
+    { misc = 'F', desc = 'Toggle caret following (the cursor and IntelliJ\'s caret move together)',
+      run = function() local c = require('ij_bridge.caret'); vim.cmd('IjBridge follow ' .. (c.enabled and 'off' or 'on')) end },
     { misc = 'k', desc = 'List the keys the Bridge binds', run = function() vim.cmd('IjBridge keys') end },
     { misc = 'll', desc = 'Open the Editor log', run = function() vim.cmd('IjBridge log') end },
     { misc = 'lb', desc = 'Open the Brain log', run = function() vim.cmd('IjBridge brainlog') end },
