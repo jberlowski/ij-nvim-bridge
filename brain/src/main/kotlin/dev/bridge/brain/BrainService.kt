@@ -70,6 +70,17 @@ class BrainService(private val project: Project) : Disposable {
     }
 
     init {
+        mirrors.onGone = { uri, owners, why ->
+            diagnostics.clear(uri); runnables.clear(uri)
+            record.info(null, "file_gone") { put("uri", uri); put("why", why) }
+            for (owner in owners) (owner as? Session)?.let { session ->
+                session.notifyClient("\$/ij/fileGone", buildJsonObject { put("uri", uri); put("why", why) })
+                session.notifyClient("window/showMessage", buildJsonObject {
+                    put("type", 3) // Info
+                    put("message", "${uri.substringAfterLast('/')}: $why. Neovim's text is kept; IntelliJ's help for it resumes when it is saved.")
+                })
+            }
+        }
         mirrors.foreign.record = { uri, outcome -> record.info(null, "foreign_edit") { put("uri", uri); put("outcome", outcome) } }
     }
 

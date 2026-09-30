@@ -188,6 +188,9 @@ local function connect(buf, entry)
       ['$/ij/run/finished'] = function(_, params)
         require('ij_bridge.test_run').on_finished(params)
       end,
+      ['$/ij/fileGone'] = function(_, params)
+        vim.schedule(function() M.on_file_gone(params) end)
+      end,
       ['$/ij/caret'] = function(_, params)
         require('ij_bridge.caret').on_caret(params)
       end,
@@ -383,6 +386,20 @@ function M.detach(buf)
   for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf, name = M.name })) do
     vim.lsp.buf_detach_client(buf, client.id)
   end
+end
+
+--- The file behind an attached buffer was deleted, moved or renamed on disk (a `git reset`, a checkout of another
+--- branch). IntelliJ has let go of its Mirror; the buffer, and whatever unsaved text it has, stays as it is. It is left
+--- alone (no requests) and treated as a file that does not exist yet: attached again once it is written, or once the
+--- file is back.
+function M.on_file_gone(params)
+  local buf = vim.uri_to_bufnr(params.uri)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  log.info('file_gone', { buf = buf, uri = params.uri, why = params.why })
+  M.detach(buf)
+  M.unwritten[buf] = true
 end
 
 --- SPEC.md §5.2: Mirror Set = { active buffer } U { every buffer with unsaved
@@ -724,6 +741,18 @@ function M.setup(opts)
     end,
   })
 
+  -- A file that was gone may be back (a checkout, a restore): buffers waiting for their file try again.
+  vim.api.nvim_create_autocmd({ 'FocusGained', 'FileChangedShellPost', 'BufReadPost' }, {
+    group = group,
+    callback = function()
+      for buf in pairs(M.unwritten) do
+        if vim.api.nvim_buf_is_valid(buf) and vim.uv.fs_stat(vim.api.nvim_buf_get_name(buf)) then
+          M.unwritten[buf] = nil
+          M.attach(buf)
+        end
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd('VimLeavePre', {
     group = group,
     callback = function()

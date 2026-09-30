@@ -283,6 +283,7 @@ Exists for the harness and for development. Not a user feature in v1.
 $/ij/caret        S→C  { uri, version, position }  the developer moved the Mirror's caret in the IDE (opt-in)
 $/ij/caret        C→S  { textDocument, version, position }  the Editor's cursor moved (opt-in, debounced ~100 ms)
 $/ij/follow       C→S  { enabled }            opt in or out of caret following for this Session
+$/ij/fileGone      S→C  { uri, why }           the Mirror's file was deleted, moved or renamed: the Mirror is released, the Editor keeps its text
 $/ij/debug/state  req  → { project, capabilities, state, evictions, lookupActive,
                            mirrors: [{ uri, version, convergent, open, length }] }
 $/ij/debug/setTabLimit · saveAll   harness-only levers (provoke the tab limit; do what an idle IDE does)

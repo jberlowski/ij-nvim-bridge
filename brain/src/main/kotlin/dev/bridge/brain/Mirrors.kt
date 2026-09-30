@@ -14,6 +14,13 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
+import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
 import kotlinx.serialization.json.JsonArray
@@ -95,12 +102,62 @@ class MirrorSet(private val project: Project) : Disposable {
                 override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
                     if (file in closingByUs) return
                     val lost = mirrors.values.firstOrNull { it.file == file } ?: return
+                    // IntelliJ closes the editor of a file that was deleted: there is nothing to reopen.
+                    if (!lost.file.isValid) { gone(lost, "its file was deleted"); return }
                     evictions.incrementAndGet()
                     log.warn("bridge: Mirror for ${lost.uri} was closed by IntelliJ; reopening")
                     ApplicationManager.getApplication().invokeLater { reopen(lost) }
                 }
             },
         )
+        // A file deleted, moved or renamed under a Mirror (`git reset`, a checkout of another branch): its Mirror has no
+        // file any more, and must not go on as if it had. Told before the change happens, while the file is still valid.
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            VirtualFileManager.VFS_CHANGES,
+            object : BulkFileListener {
+                override fun before(events: List<VFileEvent>) {
+                    for (event in events) {
+                        val why = when {
+                            event is VFileDeleteEvent -> "its file was deleted"
+                            event is VFileMoveEvent -> "its file was moved"
+                            event is VFilePropertyChangeEvent && event.isRename -> "its file was renamed"
+                            else -> continue
+                        }
+                        val changed = event.file ?: continue
+                        // The file itself, or any directory above it.
+                        mirrors.values.filter { VfsUtilCore.isAncestor(changed, it.file, false) }.forEach { gone(it, why) }
+                    }
+                }
+            },
+        )
+    }
+
+    /** Called when a Mirror is released because its file is gone: (uri, the Sessions that had it, why). */
+    @Volatile var onGone: ((String, List<Any>, String) -> Unit)? = null
+
+    /**
+     * A Mirror's file no longer exists. The Mirror goes, without reading or reloading anything (there is nothing on
+     * disk to reload to, and the text that matters is the Editor's, which it keeps), and the Editor is told so that it
+     * stops asking and picks the file up again if it comes back (a save, or a checkout). Later, on the EDT: this is
+     * reached from inside file-system events.
+     */
+    private fun gone(m: Mirror, why: String) {
+        if (mirrors[m.uri] !== m) return
+        ApplicationManager.getApplication().invokeLater {
+            if (!mirrors.remove(m.uri, m)) return@invokeLater
+            try {
+                foreign.unwatch(m)
+                MirroredFiles.remove(m.file)
+                if (m.file.isValid) {
+                    closingByUs += m.file
+                    try { FileEditorManager.getInstance(project).closeFile(m.file) } finally { closingByUs -= m.file }
+                }
+            } catch (t: Throwable) {
+                log.warn("bridge: releasing the Mirror of a vanished file ${m.uri} failed", t)
+            }
+            runCatching { onReleased?.invoke(m.uri) }
+            runCatching { onGone?.invoke(m.uri, m.owners.toList(), why) }
+        }
     }
 
     fun get(uri: String): Mirror? = mirrors[uri]
@@ -198,7 +255,7 @@ class MirrorSet(private val project: Project) : Disposable {
         // the file is what it was before the write - and it is what a released Mirror reloads to,
         // which read as the file having lost its edits. Look now: one file. The veto stays, so the
         // Mirror's own text is not reloaded, only what the IDE believes the disk holds.
-        com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, false, false, m.file)
+        if (m.file.isValid) com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, false, false, m.file)
     }
 
     /** A Session closed its buffer. The Mirror goes only when no Session has it open. */
@@ -240,13 +297,16 @@ class MirrorSet(private val project: Project) : Disposable {
                 // A released Mirror must not leave its text behind as an unsaved
                 // document: once the veto lifts, IntelliJ would autosave a buffer
                 // the developer may have discarded (:bd!) onto their file.
-                MirroredFiles.allowingReload {
-                    ApplicationManager.getApplication().runWriteAction {
-                        FileDocumentManager.getInstance().reloadFromDisk(m.document)
+                // (Not for a file that no longer exists: there is nothing to reload to.)
+                if (m.file.isValid) {
+                    MirroredFiles.allowingReload {
+                        ApplicationManager.getApplication().runWriteAction {
+                            FileDocumentManager.getInstance().reloadFromDisk(m.document)
+                        }
                     }
                 }
                 MirroredFiles.remove(m.file)
-                FileEditorManager.getInstance(project).closeFile(m.file)
+                if (m.file.isValid) FileEditorManager.getInstance(project).closeFile(m.file)
             }
         } finally {
             closingByUs -= m.file
@@ -271,6 +331,7 @@ class MirrorSet(private val project: Project) : Disposable {
 
     private fun reopen(lost: Mirror) {
         if (mirrors[lost.uri] !== lost) return
+        if (!lost.file.isValid) { gone(lost, "its file was deleted"); return }
         lost.editor = openEditor(lost.file)
         runCatching { onOpened?.invoke(lost) }
     }
