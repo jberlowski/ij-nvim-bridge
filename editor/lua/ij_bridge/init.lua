@@ -747,7 +747,11 @@ function M.setup(opts)
       M.set_log_level(rest)
     elseif sub == 'diagnostics' then
       local diagnostics = require('ij_bridge.diagnostics')
-      if rest == '' then
+      if rest == 'list' then
+        local rows = diagnostics.report()
+        print(#rows == 0 and 'ij-bridge: the Brain sent no diagnostics for this buffer'
+          or ('ij-bridge: what IntelliJ reported here (its own severity, then LSP\'s):\n' .. table.concat(rows, '\n')))
+      elseif rest == '' then
         print('ij-bridge: showing diagnostics down to ' .. diagnostics.level() .. ' (error, warn, info, hint)')
       elseif diagnostics.set_level(rest) then
         print('ij-bridge: showing diagnostics down to ' .. rest)
@@ -777,7 +781,7 @@ function M.setup(opts)
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint], report, copyref, new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint|list], report, copyref, new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
     end
   end, {
     nargs = '?',

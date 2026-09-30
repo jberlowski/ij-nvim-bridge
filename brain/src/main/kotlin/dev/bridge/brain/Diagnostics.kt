@@ -124,6 +124,13 @@ class DiagnosticsPublisher(private val project: Project, private val brain: Brai
                 put("end", position(doc, end))
             })
             put("severity", severity(info.severity))
+            // LSP has four severities; IntelliJ has more (INFORMATION 10, TEXT ATTRIBUTES 11, SERVER PROBLEM 100,
+            // WEAK WARNING 200, WARNING 300, ERROR 400, and any the IDE registers). Everything below WEAK WARNING is
+            // "hint" above, so the IDE's own is sent as well, for a client that wants to tell them apart.
+            put("data", buildJsonObject {
+                put("ijSeverity", info.severity.name)
+                put("ijSeverityValue", info.severity.myVal)
+            })
             put("message", info.description)
             put("source", "IntelliJ")
             // Errors from annotators carry no inspection id; inspections do.

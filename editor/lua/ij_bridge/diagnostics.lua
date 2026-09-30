@@ -34,6 +34,30 @@ function M.on_publish(err, params, ctx)
   show(err, params, ctx)
 end
 
+--- What the Brain sent for the current buffer, by IntelliJ's own severity: for finding out what a diagnostic
+--- Neovim shows but IntelliJ does not really is. Lines, most severe first.
+function M.report(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  local uri = vim.uri_from_bufnr(buf)
+  local rows = {}
+  for _, uris in pairs(raw) do
+    for u, params in pairs(uris) do
+      if u == uri then
+        for _, d in ipairs(params.diagnostics or {}) do
+          local ij = d.data or {}
+          table.insert(rows, {
+            value = ij.ijSeverityValue or -1,
+            text = ('%-18s LSP %d  line %-4d %s%s'):format(
+              ij.ijSeverity or '?', d.severity or 1, d.range.start.line + 1, d.code and (d.code .. ': ') or '', d.message),
+          })
+        end
+      end
+    end
+  end
+  table.sort(rows, function(a, b) return a.value > b.value end)
+  return vim.tbl_map(function(r) return r.text end, rows)
+end
+
 --- Change the level and re-show what every file already has. False for an unknown name.
 function M.set_level(name)
   if not LEVELS[name] then

@@ -249,6 +249,20 @@ class TestDiagnosticLevel:
             nvim.command("IjBridge diagnostics hint")
         assert self.shown(nvim) == {"LEVEL-error", "LEVEL-warn", "LEVEL-info", "LEVEL-hint"}
 
+    def test_the_brain_sends_intellijs_own_severity_and_the_list_shows_it(self, nvim):
+        """LSP has four severities and IntelliJ has more: the IDE's own rides along in `data`, and
+        `:IjBridge diagnostics list` shows it, to find out what a diagnostic Neovim shows really is."""
+        nvim.command(f"edit {SRC}/probe/InspectionWarning.kt")
+        wait_until(lambda: attached(nvim) == 1, message="the buffer never attached")
+
+        def rows():
+            return nvim.exec_lua("return require('ij_bridge.diagnostics').report()")
+        wait_until(lambda: len(rows()) > 0, timeout=60, message="no diagnostics were ever sent for this file")
+        assert all(not r.startswith("?") for r in rows()), rows()          # every one carries IntelliJ's severity
+        assert any(r.startswith("WARNING") for r in rows()), rows()
+        out = nvim.exec_lua("return vim.api.nvim_exec2('IjBridge diagnostics list', {output = true}).output")
+        assert "WARNING" in out, out
+
     def test_an_unknown_level_is_refused_and_changes_nothing(self, nvim):
         out = nvim.exec_lua("return vim.api.nvim_exec2('IjBridge diagnostics loud', {output = true}).output")
         assert "unknown level" in out, out
