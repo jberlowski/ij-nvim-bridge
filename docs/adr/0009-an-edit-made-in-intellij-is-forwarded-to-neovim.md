@@ -32,6 +32,10 @@ The Editor's buffer is the Source of Truth. **A Mirror must equal it.** So an ed
 - IntelliJ's save on a Mirror stays vetoed: `Ctrl+S` in the IDE window writes nothing.
 - Every foreign edit is written to the Brain's log (`foreign_edit`, with what happened to it), which is also how an edit IntelliJ makes by itself, and nobody meant, would be noticed.
 
+## Status
+
+Built (`ForeignEdits.kt`; `Session.request` for the Brain's own requests to the Editor, whose replies were until now ignored). Changes from the design as first written: the replay of an edit made while another is in flight is decided by comparing the Mirror's text with what was sent, not by a flag, because the second edit can arrive before its own settling has run. Found on the way: `MirrorSet.open` could make two Mirrors on one Document when two Editors opened a file at the same moment; it is now serialized.
+
 ## Tests
 
 On the wire, with a client that plays the Editor: an edit made through a debug lever (a Document change the Brain did not make) is answered by a `workspace/applyEdit` with the right version and the right edits; `applied: true` then the echo `didChange` leaves the Mirror equal to the client's text, once; `applied: false` restores the Mirror and shows a message; a second edit during the first is replayed; a change to two Mirrors is one request. Through a real Neovim: the edit appears in the buffer, is one undo step, and completion for a symbol it added resolves.

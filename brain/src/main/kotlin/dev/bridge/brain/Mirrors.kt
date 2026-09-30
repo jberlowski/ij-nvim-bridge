@@ -38,6 +38,15 @@ class Mirror(
     /** Holds exactly the buffer's bytes at [version]: every change was applied. */
     @Volatile var convergent: Boolean = true
 
+    // An edit made in the IDE rather than by the Editor (ForeignEdits, ADR-0009).
+    /** True while the Brain itself is changing the Document: those changes are not foreign. */
+    @Volatile var applying: Boolean = false
+    /** The text just before the first foreign change, while there is one not yet settled or answered. */
+    @Volatile var base: String? = null
+    /** An IDE edit sent to the Editor and not yet echoed back. */
+    @Volatile var pending: Forward? = null
+    var listener: com.intellij.openapi.editor.event.DocumentListener? = null
+
     /**
      * The Sessions that have this buffer open. A Mirror belongs to the project,
      * but a Session's claim on it must not outlive the Session, and must not be
@@ -58,6 +67,9 @@ class MirrorSet(private val project: Project) : Disposable {
 
     private val log = logger<MirrorSet>()
     private val mirrors = ConcurrentHashMap<String, Mirror>()
+
+    /** An edit made in the IDE window is forwarded to the Editor (ADR-0009). */
+    val foreign = ForeignEdits(this)
     private val closingByUs = ConcurrentHashMap.newKeySet<VirtualFile>()
     val evictions = AtomicInteger()
 
@@ -90,6 +102,8 @@ class MirrorSet(private val project: Project) : Disposable {
         edt { FileEditorManager.getInstance(project).openFile(m.file, false) }
     }
 
+    /** One at a time: two Editors opening the same file together must end with one Mirror, not two on one Document. */
+    @Synchronized
     fun open(uri: String, version: Int, rawText: String, owner: Any) {
         val text = normalise(rawText)
         mirrors[uri]?.let { existing ->
@@ -119,6 +133,7 @@ class MirrorSet(private val project: Project) : Disposable {
         mirror.owners += owner
         MirroredFiles.add(file)
         mirrors[uri] = mirror
+        edt { foreign.watch(mirror) }
         runCatching { onOpened?.invoke(mirror) }   // a watcher failing must never fail an open
     }
 
@@ -134,14 +149,22 @@ class MirrorSet(private val project: Project) : Disposable {
     fun change(uri: String, version: Int, changes: JsonArray) {
         val m = mirrors[uri] ?: throw IllegalArgumentException("not mirrored: $uri")
         m.convergent = false
+        // An edit made in the IDE that this change is the echo of: the Mirror goes back to before it first.
+        val echo = foreign.echoArrives(m)
         edt {
-            WriteCommandAction.runWriteCommandAction(project) {
-                for (change in changes) apply(m.document, change.jsonObject)
+            m.applying = true
+            try {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    for (change in changes) apply(m.document, change.jsonObject)
+                }
+                PsiDocumentManager.getInstance(project).commitDocument(m.document)
+            } finally {
+                m.applying = false
             }
-            PsiDocumentManager.getInstance(project).commitDocument(m.document)
         }
         m.version = version
         m.convergent = true
+        echo?.let { foreign.echoed(m, it) }
     }
 
     /**
@@ -194,6 +217,7 @@ class MirrorSet(private val project: Project) : Disposable {
 
     private fun release(uri: String) {
         val m = mirrors.remove(uri) ?: return
+        edt { foreign.unwatch(m) }
         onReleased?.invoke(uri)
         closingByUs += m.file
         try {
@@ -251,7 +275,24 @@ class MirrorSet(private val project: Project) : Disposable {
         doc.replaceString(start, end, text)
     }
 
+    /**
+     * For tests: change a Mirror's text as a person typing in the IDE window would, which is not the Brain's own
+     * change and so is what [foreign] must notice. `remove` characters at line/character are replaced by `text`.
+     */
+    fun debugEdit(params: JsonObject) {
+        val m = mirrors[params["uri"]!!.jsonPrimitive.content] ?: throw IllegalArgumentException("not mirrored")
+        val remove = params["remove"]?.jsonPrimitive?.intOrNull ?: 0
+        val text = params["text"]?.jsonPrimitive?.contentOrNull ?: ""
+        edt {
+            WriteCommandAction.runWriteCommandAction(project) {
+                val at = offset(m.document, params)
+                m.document.replaceString(at, minOf(at + remove, m.document.textLength), text)
+            }
+        }
+    }
+
     override fun dispose() {
+        foreign.dispose()
         mirrors.values.forEach { MirroredFiles.remove(it.file) }
         mirrors.clear()
     }

@@ -33,6 +33,21 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
     private val transport = Transport(Channels.newOutputStream(conn), id, brain.record)
     private var count = 0L
 
+    // Requests the Brain makes of the Editor (`workspace/applyEdit`), and what to do with each reply.
+    private val replies = java.util.concurrent.ConcurrentHashMap<String, (JsonObject) -> Unit>()
+    private val requestIds = java.util.concurrent.atomic.AtomicLong()
+
+    /** A request to the Editor. [onReply] gets the whole reply message, on this Session's reader thread. */
+    fun request(method: String, params: JsonObject, onReply: (JsonObject) -> Unit) {
+        val id = "ij-req-${requestIds.incrementAndGet()}"
+        replies[id] = onReply
+        transport.send(buildJsonObject {
+            put("jsonrpc", "2.0"); put("id", id); put("method", method); put("params", params)
+        })
+    }
+
+    fun notifyClient(method: String, params: JsonObject) = transport.send(Wire.notification(method, params))
+
     /** Opt-in (FEATURES.md §6c), read once at `initialize` from `initializationOptions.formatOnSave`. */
     private var formatOnSave = false
 
@@ -71,7 +86,12 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
 
     /** False ends the session. */
     private fun handle(message: JsonObject, arrived: Long): Boolean {
-        val method = message["method"]?.jsonPrimitive?.contentOrNull ?: return true
+        val method = message["method"]?.jsonPrimitive?.contentOrNull
+        if (method == null) {
+            // A reply to a request of ours.
+            message["id"]?.jsonPrimitive?.contentOrNull?.let { replies.remove(it)?.invoke(message) }
+            return true
+        }
         val id = message["id"]
         val params = message["params"] as? JsonObject ?: buildJsonObject {}
         count++
@@ -164,6 +184,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     brain.refreshFiles(async = true)
                 "\$/ij/completionCancel" -> brain.completion.cancel(params.str("streamId"))
                 "\$/ij/debug/state" -> reply(id, debugState(params))
+                "\$/ij/debug/edit" -> { brain.mirrors.debugEdit(params); reply(id, JsonNull) }
                 "\$/ij/debug/saveAll" -> {
                     // What an idle IDE or a frame deactivation triggers.
                     edt { com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments() }

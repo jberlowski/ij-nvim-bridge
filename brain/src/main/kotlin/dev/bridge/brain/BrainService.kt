@@ -68,6 +68,10 @@ class BrainService(private val project: Project) : Disposable {
         mirrors.onReleased = { uri -> it.unwatch(uri) }
     }
 
+    init {
+        mirrors.foreign.record = { uri, outcome -> record.info(null, "foreign_edit") { put("uri", uri); put("outcome", outcome) } }
+    }
+
     private val transports = java.util.concurrent.CopyOnWriteArraySet<Transport>()
 
     fun register(transport: Transport) { transports += transport }
