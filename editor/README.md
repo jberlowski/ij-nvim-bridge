@@ -88,6 +88,7 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 | test | `<leader>tg` | Go to the test / the class under test, offering to create one | Kotlin and Java buffers with an IntelliJ connection |
 | | `<leader>tn` `tc` `tf` | Run the nearest test / every test in this class / file | same |
 | | `<leader>tR` `tx` | Run the last test again / stop the running one | same |
+| | `<leader>to` `tl` | Show the results tree and the selected test's log / the raw Gradle log | same |
 | file/find | `<leader>fN` | New file from an IntelliJ template (asks kind and name); `fn` is LazyVim's own New File | Kotlin and Java buffers **with an IntelliJ connection** |
 | miscellaneous | `<leader>ai` | State of this buffer (attached, indexing, ...) | everywhere |
 | | `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | everywhere (it is how to get a connection) |

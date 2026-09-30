@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test
 class FailingTest {
     @Test
     fun deliberatelyWrong() {
+        println("about to fail")
+        System.err.println("a complaint on stderr")
         assertEquals(1, 2)
     }
 }

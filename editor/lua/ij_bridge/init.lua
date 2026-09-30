@@ -176,6 +176,12 @@ local function connect(buf, entry)
       ['$/ij/run/output'] = function(_, params)
         require('ij_bridge.test_run').on_output(params)
       end,
+      ['$/ij/test/suite'] = function(_, params)
+        require('ij_bridge.test_results').on_suite(params)
+      end,
+      ['$/ij/test/output'] = function(_, params)
+        require('ij_bridge.test_results').on_output(params)
+      end,
       ['$/ij/test/status'] = function(_, params)
         require('ij_bridge.test_run').on_status(params)
       end,

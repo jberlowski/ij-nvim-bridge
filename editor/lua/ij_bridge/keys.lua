@@ -6,7 +6,7 @@
 --   <leader>c   code           Gradle tasks: find and run (`cg`), the hierarchy (`cG`), run the last again (`cb`), stop (`cB`), sync (`cs`)
 --                              Run Configurations: find and run (`ce`), run the last again (`cE`), stop (`cK`)
 --   <leader>f   file/find      new file from an IntelliJ template (`fN`; `fn` is LazyVim's own New File)
---   <leader>t   test           go to the test (`tg`); run nearest/class/file, repeat, stop (`tn`, `tc`, `tf`, `tR`, `tx`)
+--   <leader>t   test           go to the test (`tg`); run nearest/class/file, repeat, stop (`tn`, `tc`, `tf`, `tR`, `tx`), the results tree and the raw log (`to`, `tl`)
 --   <leader>a   miscellaneous  state, opening the project, the keys, the logs
 --
 -- Organize imports is not here: `source.organizeImports` is a standard code action, and LazyVim already binds
@@ -105,6 +105,10 @@ local function actions()
       when = 'connected', ft = M.jvm },
     { lhs = '<leader>tR', desc = 'Run the last test again', run = function() require('ij_bridge.test_run').repeat_last() end,
       when = 'connected', ft = M.jvm },
+    { lhs = '<leader>to', desc = 'Show the test results (the tree and the selected test\'s log)',
+      run = function() require('ij_bridge.test_results').show() end, when = 'connected', ft = M.jvm },
+    { lhs = '<leader>tl', desc = 'Show the raw Gradle log of the last test run',
+      run = function() require('ij_bridge.test_run').show_raw_log() end, when = 'connected', ft = M.jvm },
     { lhs = '<leader>tx', desc = 'Stop the running test', run = function() require('ij_bridge.test_run').cancel() end,
       when = 'connected', ft = M.jvm },
   }

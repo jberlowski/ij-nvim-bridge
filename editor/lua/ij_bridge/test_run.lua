@@ -96,7 +96,9 @@ local function do_run(buf, uri, position, scope)
     vim.api.nvim_buf_set_lines(obuf, 0, -1, false, { '' })
     vim.bo[obuf].modifiable = false
     append(obuf, ('▶ %s test run\n\n'):format(scope))
-    show(obuf)
+    -- The results tree and the log of the selected test are what is shown; the raw Gradle log is still kept
+    -- here, for `show_raw_log()`.
+    require('ij_bridge.test_results').start(result.runId, client.config.root_dir)
     log.info('test_run_started', { run = result.runId, scope = scope })
   end, buf)
 end
@@ -119,6 +121,11 @@ end
 function M.run_file()
   local buf = vim.api.nvim_get_current_buf()
   do_run(buf, vim.uri_from_bufnr(buf), cursor_position(), 'file')
+end
+
+--- The raw Gradle log of the last run, at the bottom.
+function M.show_raw_log()
+  show(output_buffer())
 end
 
 function M.repeat_last()
@@ -155,6 +162,7 @@ function M.on_status(params)
     return
   end
   require('ij_bridge.runnables').mark_status(M.current.buf, params.name, params.status)
+  require('ij_bridge.test_results').on_status(params)
   if params.status == 'started' then
     append(output_buffer(), '▶ ' .. params.name .. '\n')
   else
@@ -177,6 +185,7 @@ function M.on_finished(params)
     summary = '✘ failed after ' .. seconds .. (params.error and (': ' .. params.error) or '')
   end
   append(output_buffer(), '\n' .. summary .. '\n')
+  require('ij_bridge.test_results').finish(params)
   log.info('test_run_finished', { run = params.runId, success = params.success, cancelled = params.cancelled, ms = params.ms })
   vim.notify('ij-bridge: test run ' .. summary:sub(3), params.success and vim.log.levels.INFO or vim.log.levels.WARN)
   if M.current and M.current.run_id == params.runId then

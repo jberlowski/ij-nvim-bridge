@@ -6,6 +6,7 @@ import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.testframework.sm.runner.SMTRunnerEventsAdapter
 import com.intellij.execution.testframework.sm.runner.SMTRunnerEventsListener
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.testframework.sm.runner.events.TestOutputEvent
 import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -29,6 +30,7 @@ import com.intellij.testIntegration.TestFinderHelper
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -232,11 +234,22 @@ class TestRunner(private val project: Project, private val brain: BrainService) 
             override fun onTestFinished(test: SMTestProxy) {
                 if (!test.isSuite) sendStatus(run, test, statusOf(test.magnitudeInfo))
             }
+            override fun onSuiteStarted(suite: SMTestProxy) = sendSuite(run, suite, "started")
+            override fun onSuiteFinished(suite: SMTestProxy) = sendSuite(run, suite, statusOf(suite.magnitudeInfo))
+            // What the test itself printed, as it comes: the Gradle log keeps almost none of it.
+            override fun onTestOutput(test: SMTestProxy, event: TestOutputEvent) {
+                run.transport.send(Wire.notification("\$/ij/test/output", buildJsonObject {
+                    put("runId", run.id)
+                    put("path", pathOf(test))
+                    put("text", event.text)
+                    put("stdout", event.outputType.toString() != "stderr")
+                }))
+            }
         })
         val gsettings = ExternalSystemTaskExecutionSettings().apply {
             externalProjectPath = es.settings.externalProjectPath
-            taskNames = es.settings.taskNames
-            scriptParameters = es.settings.scriptParameters
+            taskNames = rerunning(es.settings.taskNames)
+            scriptParameters = listOfNotNull(es.settings.scriptParameters?.takeIf { it.isNotBlank() }, "--no-build-cache").joinToString(" ")
             externalSystemIdString = "GRADLE"
         }
         val listener = object : ExternalSystemTaskNotificationListener {
@@ -272,14 +285,65 @@ class TestRunner(private val project: Project, private val brain: BrainService) 
         ExternalSystemUtil.runTask(spec)
     }
 
+    /**
+     * Gradle skips a test task whose inputs have not changed ("UP-TO-DATE"), so a test run again unchanged would
+     * report success without running anything; a build cache hit ("FROM-CACHE") does the same. IntelliJ's own Run
+     * always runs the tests: each test task gets its `clean` twin first (`:sub:test` -> `:sub:cleanTest`), and the
+     * build cache is off for the run (`--no-build-cache`, which every Gradle version has).
+     */
+    private fun rerunning(tasks: List<String>): List<String> {
+        val cleans = tasks.filter { !it.startsWith("-") && it.substringAfterLast(':').endsWith("test", ignoreCase = true) }
+            .map { task ->
+                val name = task.substringAfterLast(':')
+                task.substring(0, task.length - name.length) + "clean" + name.replaceFirstChar { it.uppercase() }
+            }
+        return (cleans + tasks).distinct()
+    }
+
     private fun sendStatus(run: Run, test: SMTestProxy, status: String) {
         run.transport.send(Wire.notification("\$/ij/test/status", buildJsonObject {
             put("runId", run.id)
             put("name", test.name)
+            put("path", pathOf(test))
             put("status", status)
-            test.errorMessage?.takeIf { it.isNotBlank() }?.let { put("message", it) }
-            test.stacktrace?.takeIf { it.isNotBlank() }?.let { put("stacktrace", it) }
+            test.duration?.let { put("ms", it) }
+            // Gradle's results carry no separate message: it is the stack trace's first line.
+            val trace = test.stacktrace?.takeIf { it.isNotBlank() }
+            (test.errorMessage?.takeIf { it.isNotBlank() } ?: trace?.lineSequence()?.firstOrNull())?.let { put("message", it) }
+            trace?.let { put("stacktrace", it) }
+            // A failed assertion's two sides, as IntelliJ's own "Click to see difference" has them.
+            test.diffViewerProvider?.let { diff ->
+                put("expected", diff.left)
+                put("actual", diff.right)
+            }
         }))
+    }
+
+    /** A class (or other suite) of tests: the tree's interior. */
+    private fun sendSuite(run: Run, suite: SMTestProxy, status: String) {
+        val path = pathOf(suite)
+        if (path.isEmpty()) return // the run's own root
+        run.transport.send(Wire.notification("\$/ij/test/suite", buildJsonObject {
+            put("runId", run.id)
+            put("path", path)
+            put("status", status)
+            suite.duration?.let { put("ms", it) }
+        }))
+    }
+
+    /**
+     * The names from the top of the tree down to [test]: which class a test is in. Left out: the run's own
+     * root and the two wrappers Gradle puts above every class ("Gradle Test Run", "Gradle Test Executor"),
+     * which say nothing a developer asked about.
+     */
+    private fun pathOf(test: SMTestProxy): JsonArray {
+        val names = ArrayList<String>()
+        var at: SMTestProxy? = test
+        while (at != null && at.parent != null) {
+            if (!at.name.startsWith("Gradle Test Run") && !at.name.startsWith("Gradle Test Executor")) names += at.name
+            at = at.parent as? SMTestProxy
+        }
+        return JsonArray(names.reversed().map(::JsonPrimitive))
     }
 
     private fun statusOf(magnitude: TestStateInfo.Magnitude): String = when (magnitude) {
