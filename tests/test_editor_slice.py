@@ -218,6 +218,43 @@ class TestDiagnostics:
         assert not state["CrossFileConsumer.kt"]["showing"], state
 
 
+class TestDiagnosticLevel:
+    """The Brain sends every diagnostic; `min_severity` decides which the Editor shows."""
+
+    @staticmethod
+    def shown(nvim) -> set[str]:
+        return {d["message"] for d in nvim.exec_lua("return vim.diagnostic.get(0)") if d["message"].startswith("LEVEL-")}
+
+    def test_hiding_and_showing_by_level(self, nvim):
+        nvim.command(f"edit {PRODUCER}")
+        wait_until(lambda: attached(nvim) == 1, message="the buffer never attached")
+        nvim.exec_lua("""
+            local uri = vim.uri_from_bufnr(0)
+            local function d(sev, msg)
+              return { range = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 1 } },
+                       severity = sev, message = 'LEVEL-' .. msg }
+            end
+            require('ij_bridge.diagnostics').on_publish(nil, { uri = uri, diagnostics = { d(1, 'error'), d(2, 'warn'),
+              d(3, 'info'), d(4, 'hint') } },
+              { client_id = vim.lsp.get_clients({ bufnr = 0, name = 'ij-bridge' })[1].id, method = 'textDocument/publishDiagnostics' })""")
+        try:
+            assert self.shown(nvim) == {"LEVEL-error", "LEVEL-warn", "LEVEL-info", "LEVEL-hint"}    # the default: everything
+            nvim.command("IjBridge diagnostics warn")
+            assert self.shown(nvim) == {"LEVEL-error", "LEVEL-warn"}
+            nvim.command("IjBridge diagnostics error")
+            assert self.shown(nvim) == {"LEVEL-error"}
+            nvim.command("IjBridge diagnostics info")
+            assert self.shown(nvim) == {"LEVEL-error", "LEVEL-warn", "LEVEL-info"}               # brought back, no new pass
+        finally:
+            nvim.command("IjBridge diagnostics hint")
+        assert self.shown(nvim) == {"LEVEL-error", "LEVEL-warn", "LEVEL-info", "LEVEL-hint"}
+
+    def test_an_unknown_level_is_refused_and_changes_nothing(self, nvim):
+        out = nvim.exec_lua("return vim.api.nvim_exec2('IjBridge diagnostics loud', {output = true}).output")
+        assert "unknown level" in out, out
+        assert nvim.exec_lua("return require('ij_bridge.diagnostics').level()") == "hint"
+
+
 # ------------------------------------------------------------------- state
 class TestStatus:
 
