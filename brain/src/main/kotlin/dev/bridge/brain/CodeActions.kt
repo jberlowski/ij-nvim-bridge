@@ -43,6 +43,8 @@ import kotlinx.serialization.json.put
 class CodeActions(private val project: Project) {
 
     companion object {
+        /** How long listing may spend running offers to classify them (see [expandWithinBudget]). */
+        const val EXPAND_BUDGET_MS = 100L
         const val ORGANIZE_IMPORTS = "source.organizeImports"
         const val GENERATE = "source.generate"
         const val QUICK_FIX = "quickfix"
@@ -116,6 +118,32 @@ class CodeActions(private val project: Project) {
             }
         }
         return out.values.toList()
+    }
+
+    /** What one offer stands for, remembered: (kind, key, title) for each action it becomes, none if it changes no text. */
+    private val expansions = java.util.concurrent.ConcurrentHashMap<String, List<Triple<String, String, String>>>()
+
+    /**
+     * [expand] for each offer, but for no longer than [EXPAND_BUDGET_MS] in all. Running an offer to see what it is costs
+     * about 100 ms each (1.4 s the first time, measured), which is too long to make the menu wait for; so what is not
+     * reached in time is listed as it is (resolving still says why an action cannot be applied), and what *was*
+     * worked out is remembered for this file version and place, so asking again at the same spot finishes the job.
+     */
+    private fun expandWithinBudget(mirror: Mirror, offers: List<Offer>, context: ActionContext): List<Offer> {
+        val deadline = System.nanoTime() + EXPAND_BUDGET_MS * 1_000_000
+        val editor = mirror.editor
+        val place = "${mirror.uri}|${mirror.version}|${editor.caretModel.offset}|${editor.selectionModel.selectionStart}-${editor.selectionModel.selectionEnd}|"
+        if (expansions.size > 1024) expansions.clear()
+        return offers.flatMap { offer ->
+            val known = expansions[place + offer.key]
+            when {
+                known != null -> known.map { (kind, key, title) -> Offer(kind, key, title, offer.action) }
+                System.nanoTime() > deadline -> listOf(offer)
+                else -> expand(offer, context).also { result ->
+                    expansions[place + offer.key] = result.map { Triple(it.kind, it.key, it.title) }
+                }
+            }
+        }
     }
 
     /**
@@ -232,7 +260,8 @@ class CodeActions(private val project: Project) {
             return emptyList()
         }
         val context = ActionContext.from(mirror.editor, PsiDocumentManager.getInstance(project).getPsiFile(mirror.document) ?: return emptyList())
-        return offersAt(mirror).filter { wanted(it.kind, only) }.flatMap { expand(it, context) }.map { offer ->
+        val expanded = expandWithinBudget(mirror, offersAt(mirror).filter { wanted(it.kind, only) }, context)
+        return expanded.map { offer ->
             buildJsonObject {
                 put("title", offer.title)
                 put("kind", offer.kind)

@@ -425,8 +425,11 @@ class TestChoicesAndNoOps:
         for ln, line in enumerate(JAVA_FIXABLE.split("\n")):
             for ch in range(0, len(line), 3):
                 pos = {"line": ln, "character": ch}
-                found = wire.request("textDocument/codeAction", {
-                    "textDocument": {"uri": uri(JAVA)}, "range": {"start": pos, "end": pos}, "context": {"diagnostics": []}}, timeout=90)
+                # Working out what each offer is has a time budget: what was not reached the first time is
+                # finished when the developer asks again at the same place.
+                for _ in range(3):
+                    found = wire.request("textDocument/codeAction", {
+                        "textDocument": {"uri": uri(JAVA)}, "range": {"start": pos, "end": pos}, "context": {"diagnostics": []}}, timeout=90)
                 titles.update(a["title"] for a in found)
         assert titles, "nothing was offered at all"
         assert not [t for t in titles if t.startswith(("Navigate to", "Copy "))], sorted(titles)
