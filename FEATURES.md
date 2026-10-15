@@ -166,6 +166,8 @@ Asked for, in the order to be done. Not started unless marked.
 
    Older backlog, unordered: call and type hierarchy (`callHierarchy`, `typeHierarchy`); code lens from IntelliJ's code vision (usage counts, "implements"); workspace diagnostics (errors across the project, not only the open files); on-type formatting; postfix completion and live templates; the legacy quick fixes that have no `ModCommand` form ("Create function from usage" is the one most missed), through a scratch copy with the pointers rebound; renaming from an override up to the base method; moving a directory (a package rename); the debounce of caret events when caret sync is built; baking blink.cmp's binary into the harness image; Maven reimport (Gradle's is now "Sync", above); Spring features (a paid tier); debugging through DAP (§6b).
 
+- [ ] **Reproduce and diagnose the inlay-hint redraw crash when adding a newline to a file with many hints.** Reported on Neovim 0.12.5 with LazyVim and the Bridge in TypeScript: `inlay_hint.lua:362: Invalid 'col': out of range`. The developer clarified that ordinary newline insertion triggers it; rapid edits or forced redraws are unnecessary. Local Java attempts with 1,200 genuine hints and single Enter edits at five positions did not reproduce it. Defensive Editor checks now discard changed-buffer responses and invalid positions, and clear cached Bridge hints immediately on edits; the constructed stale-column renderer case is covered. The original session remains unreproduced and Bridge responsibility unconfirmed. [Photo transcription and local reproduction results](docs/inlay-hint-redraw-report.md).
+
 ## 6b. Someday / wish list
 
 Not planned, not designed, no priority. Written down so the idea is not lost.

@@ -204,10 +204,14 @@ local function connect(buf, entry)
     -- and leaves the client standing, so on_exit never comes and the Bridge would go on
     -- believing in a Brain that is gone. A broken transport is a lost connection.
     on_init = function(client, result)
+      require('ij_bridge.inlay_hints').on_client(client)
       local info = result and result.serverInfo or {}
       M.sessions[client.id] = info
       require('ij_bridge.caret').on_client(client)
       log.info('session', { client = client.id, session = info.session, brain_log = info.log, brain = info.version })
+    end,
+    on_attach = function(client, bufnr)
+      require('ij_bridge.inlay_hints').on_attach(client, bufnr)
     end,
     on_error = function(code, err)
       log.warn('transport_error', { code = code, err = tostring(err) })

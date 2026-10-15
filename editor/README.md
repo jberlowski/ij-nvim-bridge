@@ -6,6 +6,11 @@ vocabulary. Building the two plugins from source (including the IntelliJ side, b
 is [BUILD.md](../BUILD.md); this document is everything after that: setting the
 IntelliJ side up once per machine, and the Neovim side up in your config.
 
+Bridge inlay hints are discarded immediately when a buffer changes. Responses
+for an older buffer snapshot and hints with out-of-range positions are ignored;
+fresh hints continue through Neovim's built-in renderer. This protects against
+stale-column redraw errors without changing the inlay-hint toggle.
+
 ## Setup
 
 Two halves, set up once each. Neither depends on the other's setup order.
