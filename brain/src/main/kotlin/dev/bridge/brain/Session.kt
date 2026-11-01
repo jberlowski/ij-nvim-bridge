@@ -254,7 +254,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     else reply(id, brain.testRunner.run(mirror, params, transport))
                 }
                 "\$/ij/run/cancel" -> reply(id, brain.testRunner.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
-                "\$/ij/debug/refresh" -> {
+                "\$/ij/refresh", "\$/ij/debug/refresh" -> {
                     brain.refreshFiles()
                     reply(id, JsonNull)
                 }

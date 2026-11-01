@@ -12,7 +12,7 @@ local NS = vim.api.nvim_create_namespace('ij_bridge_picker')
 M.current = nil
 
 --- @param items table[]
---- @param opts { title?: string, label: fun(item: table): string, texts: fun(item: table): string, string?, detail?: fun(item: table): string?, on_choose: fun(item: table), height?: integer, width?: integer }
+--- @param opts { title?: string, label: fun(item: table): string, texts: fun(item: table): string, string?, detail?: fun(item: table): string?, on_choose: fun(item: table), height?: integer, width?: integer, rank?: fun(items: table[], query: string, texts: function): table[] }
 function M.open(items, opts)
   if M.current then
     M.current.close()
@@ -72,7 +72,7 @@ function M.open(items, opts)
   end
 
   local function refilter()
-    state.ranked = fuzzy.rank(items, state.query, opts.texts)
+    state.ranked = (opts.rank or fuzzy.rank)(items, state.query, opts.texts)
     state.index = math.min(math.max(1, state.index), math.max(1, #state.ranked))
     if state.query == '' then
       state.index = 1
@@ -104,7 +104,7 @@ function M.open(items, opts)
     -- chosen is what the input says now, not what was last drawn.
     if text ~= state.query then
       state.query = text
-      state.ranked = fuzzy.rank(items, text, opts.texts)
+      state.ranked = (opts.rank or fuzzy.rank)(items, text, opts.texts)
       state.index = 1
     end
     local entry = state.ranked[state.index]

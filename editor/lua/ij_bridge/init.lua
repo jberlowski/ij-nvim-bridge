@@ -693,6 +693,7 @@ end
 --- @param opts? { prefix?: string, keys?: boolean, sections?: boolean, idea_cmd?: string, open_timeout?: integer, min_severity?: 'error'|'warn'|'info'|'hint', follow_caret?: boolean } `follow_caret` (default `false`) makes the cursor and IntelliJ's caret follow each other, both ways (`:IjBridge follow on|off`, `<leader>aF`). `min_severity` (default `hint`: everything the Brain sends) hides diagnostics less severe than it; `:IjBridge diagnostics <level>` changes it while running. Miscellaneous keys under `prefix` (default `<leader>a`), the others by section (`sections = false` to skip them); `keys = false` binds nothing. `idea_cmd` (default `idea`, or the `IJ_NVIM_BRIDGE_IDEA_CMD` environment variable if that is set): the command `:IjBridge open` runs to start IntelliJ. The environment variable is the better place for it when `init.lua` is shared across machines, since the right value (a Toolbox script, a `.app` bundle's launcher) is often machine- or user-specific.
 function M.setup(opts)
   M.opts = opts or {}
+  require('ij_bridge.diagnostics').setup()
   if M.opts.follow_caret then
     require('ij_bridge.caret').enable(true)
   end
@@ -788,7 +789,11 @@ function M.setup(opts)
       M.set_log_level(rest)
     elseif sub == 'diagnostics' then
       local diagnostics = require('ij_bridge.diagnostics')
-      if rest == 'list' then
+      if rest == 'exclude' then
+        diagnostics.exclude()
+      elseif rest == 'exclusions' then
+        diagnostics.menu()
+      elseif rest == 'list' then
         local rows = diagnostics.report()
         print(#rows == 0 and 'ij-bridge: the Brain sent no diagnostics for this buffer'
           or ('ij-bridge: what IntelliJ reported here (its own severity, then LSP\'s):\n' .. table.concat(rows, '\n')))
@@ -818,6 +823,8 @@ function M.setup(opts)
       require('ij_bridge.tasks').pick()
     elseif sub == 'taskstop' then
       require('ij_bridge.tasks').stop()
+    elseif sub == 'refresh' then
+      require('ij_bridge.tasks').refresh()
     elseif sub == 'sync' then
       require('ij_bridge.tasks').sync()
     elseif sub == 'taskrepeat' then
@@ -831,12 +838,15 @@ function M.setup(opts)
     elseif sub == 'keys' then
       print('ij-bridge keys:\n' .. table.concat(require('ij_bridge.keys').describe(), '\n'))
     else
-      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint|list], report, copyref, follow [on|off], new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync)')
+      print('ij-bridge: unknown subcommand ' .. sub .. ' (status, log, brainlog, loglevel <off|info|debug|trace>, diagnostics [error|warn|info|hint|list|exclude|exclusions], report, copyref, follow [on|off], new [dir], open [dir], test, keys, tasks, task, taskstop, taskrepeat, sync, refresh)')
     end
   end, {
     nargs = '?',
-    complete = function()
-      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'diagnostics', 'report', 'copyref', 'follow', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat', 'sync' }
+    complete = function(_, line)
+      if line:match('IjBridge%s+diagnostics%s+') then
+        return { 'error', 'warn', 'info', 'hint', 'list', 'exclude', 'exclusions' }
+      end
+      return { 'status', 'open', 'log', 'brainlog', 'loglevel', 'diagnostics', 'report', 'copyref', 'follow', 'new', 'test', 'keys', 'tasks', 'task', 'taskstop', 'taskrepeat', 'sync', 'refresh' }
     end,
     desc = 'Show whether this buffer is served by an IntelliJ Brain; see and change the logs',
   })

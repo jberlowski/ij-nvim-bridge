@@ -179,3 +179,68 @@ class TestOneAtATimeAndCancel:
 
     def test_cancelling_when_nothing_runs_is_harmless(self, wire):
         assert wire.request("$/ij/task/cancel", {}, timeout=30)["cancelled"] is False
+
+
+class TestSyncModelChanges:
+
+    def test_sync_imports_a_new_task_into_the_ide_model(self, wire, bridge_container):
+        path = ROOT + "/build.gradle.kts"
+        original = bridge_container.read_file(path)
+        marker = "bridgeSyncModelProbe"
+
+        def names(tree):
+            found = set()
+            for project in tree.get("projects", []):
+                for group in project.get("groups", []):
+                    found.update(task["name"] for task in group.get("tasks", []))
+                found.update(names(project))
+            return found
+
+        assert marker not in names(listing(wire))
+        try:
+            bridge_container.write_file(path, original + '\ntasks.register("' + marker + '") {}\n')
+            wire.request("$/ij/sync", {}, timeout=60)
+            done = wire.notifications("$/ij/sync/finished", until=lambda p: True, timeout=300)[0]
+            assert done["success"], done
+            wait_until(lambda: marker in names(listing(wire)), timeout=60, interval=1,
+                       message="sync reported success but the new task was never imported")
+        finally:
+            bridge_container.write_file(path, original)
+            wire.request("$/ij/sync", {}, timeout=60)
+            wire.notifications("$/ij/sync/finished", until=lambda p: True, timeout=300)
+
+
+    def test_sync_makes_a_new_dependency_resolve(self, wire, bridge_container):
+        from harness.wire import SRC, uri
+        from test_bridge_slice import published
+        from test_navigation import at
+
+        build = ROOT + "/build.gradle.kts"
+        source = f"{SRC}/probe/InspectionWarning.kt"
+        original = bridge_container.read_file(build)
+        text = 'package dev.bridge.fixture.probe\nfun capitalizeProbe() = org.apache.commons.text.WordUtils.capitalize("hello")\n'
+        wire.did_open(source, text)
+        published(wire, source, lambda ds: any(d["severity"] == 1 for d in ds))
+        line, col = at(text, "WordUtils", 0, 2)
+
+        def resolved():
+            if wire.debug_state()["state"] != "Ready":
+                return False
+            return bool(wire.request("textDocument/definition", {
+                "textDocument": {"uri": uri(source)},
+                "position": {"line": line, "character": col},
+            }, timeout=60))
+
+        assert not resolved(), "probe library was already present"
+        try:
+            bridge_container.write_file(build, original + '\ndependencies { implementation("org.apache.commons:commons-text:1.12.0") }\n')
+            wire.request("$/ij/sync", {}, timeout=60)
+            done = wire.notifications("$/ij/sync/finished", until=lambda p: True, timeout=300)[0]
+            assert done["success"], done
+            wait_until(resolved, timeout=120, interval=2,
+                       message="sync reported success but the new dependency never resolved")
+        finally:
+            wire.notify("textDocument/didClose", {"textDocument": {"uri": uri(source)}})
+            bridge_container.write_file(build, original)
+            wire.request("$/ij/sync", {}, timeout=60)
+            wire.notifications("$/ij/sync/finished", until=lambda p: True, timeout=300)

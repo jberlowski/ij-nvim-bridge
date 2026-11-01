@@ -78,22 +78,66 @@ function M.flatten(tree)
   return out
 end
 
+--- Root selectors run the matching task throughout one Gradle build. Gradle deduplicates
+--- task execution, including dependencies; individual project choices stay available.
+function M.picker_items(tree)
+  local roots = {}
+  for _, root in ipairs(tree.projects or {}) do roots[root.path] = true end
+  local items = vim.tbl_filter(function(item) return not roots[item.path] end, M.flatten(tree))
+  for _, root in ipairs(tree.projects or {}) do
+    local names = {}
+    for _, item in ipairs(M.flatten({ projects = { root } })) do
+      names[item.name] = names[item.name] or item
+    end
+    for name, item in pairs(names) do
+      table.insert(items, { name = name, path = root.path, project = root.name,
+        group = item.group, description = item.description, aggregate = true, tasks = { name } })
+    end
+    if names.build and names.clean then
+      table.insert(items, { name = 'clean build', path = root.path, project = root.name,
+        group = 'All projects', aggregate = true, tasks = { 'clean', 'build' } })
+    end
+  end
+  return items
+end
+
+function M.rank(items, query, texts)
+  local ranked = require('ij_bridge.fuzzy').rank(items, query, texts)
+  local function priority(item)
+    if not item.aggregate then return 0 end
+    if query:match('^%s*$') then
+      if item.name == 'build' then return 3 end
+      if item.name == 'clean build' then return 2 end
+    end
+    return require('ij_bridge.fuzzy').match(query, item.name) and 1 or 0
+  end
+  -- Preserve fuzzy ordering within each priority tier, including stable ties.
+  for index, entry in ipairs(ranked) do entry.order = index end
+  table.sort(ranked, function(a, b)
+    local pa, pb = priority(a.item), priority(b.item)
+    if pa ~= pb then return pa > pb end
+    return a.order < b.order
+  end)
+  return ranked
+end
+
 -- ------------------------------------------------------------------- finding
 --- The fuzzy finder over every task, and running the one chosen.
 function M.pick(on_choose)
   M.fetch(function(tree)
-    local items = M.flatten(tree)
+    local items = M.picker_items(tree)
     if #items == 0 then
       say('no Gradle tasks (the project may still be importing)', vim.log.levels.WARN)
       return
     end
     require('ij_bridge.picker').open(items, {
       title = 'Gradle task',
+      rank = M.rank,
       label = function(item) return item.name end,
       -- The name is what is matched first; the group and project too, at less weight.
       texts = function(item) return item.name, item.group .. ' ' .. item.project .. ' ' .. item.name end,
       detail = function(item)
-        return ('%s › %s%s'):format(item.project, item.group, item.description and (' — ' .. item.description) or '')
+        return ('%s › %s%s'):format(item.aggregate and ('All projects: ' .. item.project) or item.project, item.group, item.description and (' — ' .. item.description) or '')
       end,
       on_choose = on_choose or function(item) M.run(item) end,
     })
@@ -160,13 +204,13 @@ function M.run(item, args)
     say('no IntelliJ is serving this project (:IjBridge open)', vim.log.levels.WARN)
     return
   end
-  local params = { path = item.path, tasks = { item.name }, args = args }
+  local params = { path = item.path, tasks = item.tasks or { item.name }, args = args }
   c:request('$/ij/task/run', params, function(err, result)
     if err then
       say(err.message, vim.log.levels.WARN)
       return
     end
-    M.last = { path = item.path, name = item.name, args = args }
+    M.last = { path = item.path, name = item.name, tasks = item.tasks, args = args }
     local buf = output_buffer()
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '' })
@@ -243,6 +287,17 @@ function M.sync()
   end)
 end
 
+--- Refresh the project's virtual filesystem independently of Gradle import.
+function M.refresh()
+  local c = client()
+  if not c then return say('no IntelliJ is serving this buffer', vim.log.levels.WARN) end
+  say('Refreshing project files from disk')
+  c:request('$/ij/refresh', {}, function(err)
+    if err then say('refresh: ' .. (err.message or 'refused'), vim.log.levels.WARN)
+    else say('Project files refreshed; IntelliJ may continue indexing') end
+  end)
+end
+
 function M.on_sync_finished(params)
   local seconds = ('%.1fs'):format((params.ms or 0) / 1000)
   if params.success then
@@ -271,7 +326,7 @@ function M.repeat_last()
     say('no task has been run yet')
     return
   end
-  M.run({ path = M.last.path, name = M.last.name }, M.last.args)
+  M.run({ path = M.last.path, name = M.last.name, tasks = M.last.tasks }, M.last.args)
 end
 
 -- ---------------------------------------------------------------------- tree

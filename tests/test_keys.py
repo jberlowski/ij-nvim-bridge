@@ -27,6 +27,8 @@ JAVASHAPES = f"{SRC}/probe/JavaShapes.java"
 PROPERTIES = "/work/fixture/gradle.properties"
 
 MISC = {
+    "u": "IntelliJ diagnostic exclusions",
+    "j": "Refresh project files from disk",
     "i": "State of this buffer",
     "o": "Open the project in IntelliJ (start it if none is)",
     "k": "List the keys the Bridge binds",

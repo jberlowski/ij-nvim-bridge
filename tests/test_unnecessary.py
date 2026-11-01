@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from harness.util import wait_until
 from harness.wire import SRC, uri
 from test_bridge_slice import published
@@ -311,6 +313,34 @@ class TestThroughNeovim:
         tags = nvim.exec_lua("return (...).user_data and (...).user_data.lsp and (...).user_data.lsp.tags or {}", diag)
         assert UNNECESSARY in tags, diag
 
+    @pytest.mark.parametrize("path,text,needle", [
+        (KOTLIN, KOTLIN_NEVER_USED, 'Class "Lockbox"'),
+        (JAVA, JAVA_NEVER_USED, "Class 'Lockbox'"),
+        (KOTLIN, KOTLIN_UNUSED, "Unused variable"),
+        (JAVA, JAVA_UNUSED, "Variable 'unused'"),
+    ])
+    def test_unused_declarations_reach_neovim_and_are_dimmed(self, nvim, path, text, needle):
+        nvim.command(f"edit {path}")
+        wait_until(lambda: attached(nvim) == 1, message="never attached")
+        nvim.current.buffer[:] = text.rstrip("\n").split("\n")
+
+        def matching():
+            return [d for d in nvim.exec_lua("return vim.diagnostic.get(0)") if needle in d.get("message", "")]
+
+        wait_until(lambda: bool(matching()), timeout=60, interval=1,
+                   message=f"Neovim never received {needle}")
+        diagnostic = matching()[0]
+        assert UNNECESSARY in diagnostic["user_data"]["lsp"].get("tags", []), diagnostic
+        assert nvim.exec_lua("""
+            local d = ...
+            for _, ns in pairs(vim.api.nvim_get_namespaces()) do
+              for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0, ns, 0, -1, { details = true })) do
+                if mark[2] == d.lnum and mark[4].hl_group == 'DiagnosticUnnecessary' then return true end
+              end
+            end
+            return false
+        """, diagnostic), f"unused diagnostic arrived but no DiagnosticUnnecessary highlight was drawn: {diagnostic}"
+
     def test_the_remove_quick_fix_works_through_code_action(self, nvim):
         nvim.command(f"edit {KOTLIN}")
         wait_until(lambda: attached(nvim) == 1, message="never attached")
@@ -324,3 +354,16 @@ class TestThroughNeovim:
             time.sleep(3)
             return "val unused" not in "\n".join(nvim.current.buffer[:])
         wait_until(done, timeout=90, interval=2, message="the quick fix was never applied:\n" + "\n".join(nvim.current.buffer[:]))
+
+
+class TestPublicUnusedClasses:
+
+    @pytest.mark.parametrize("filename,text,needle", [
+        ("BridgeUnusedPublic.kt", "package dev.bridge.fixture.probe\n\nclass BridgeUnusedPublic\n", "BridgeUnusedPublic"),
+        ("BridgeUnusedPublicJava.java", "package dev.bridge.fixture.probe;\n\npublic class BridgeUnusedPublicJava {}\n", "BridgeUnusedPublicJava"),
+    ])
+    def test_public_unused_class_is_delivered(self, wire, project_files, filename, text, needle):
+        path = project_files(f"{SRC}/probe/{filename}", text)
+        wire.did_open(path, text)
+        pub = published(wire, path, lambda ds: any(needle in d["message"] and "never used" in d["message"] for d in ds), timeout=60)
+        assert tagged(pub["diagnostics"], needle) == [UNNECESSARY]

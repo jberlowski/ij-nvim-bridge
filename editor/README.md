@@ -101,6 +101,8 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 | miscellaneous | `<leader>ai` | State of this buffer (attached, indexing, ...) | everywhere |
 | | `<leader>ao` | Open this project in IntelliJ, starting it if none serves it | everywhere (it is how to get a connection) |
 | | `<leader>ak` | List the keys, and why one is missing here | everywhere |
+| | `<leader>au` | IntelliJ diagnostic exclusions: disable the current filetype or restore an exclusion | everywhere |
+| | `<leader>aj` | Refresh project files from disk | any attached project buffer |
 | | `<leader>all` `alb` `alr` `alv` | Editor log, Brain log, bug report, log level | everywhere |
 
 **A key that needs IntelliJ exists only where IntelliJ is.** It is made, buffer-locally, when the buffer attaches to a Session, only for the filetypes it is for, and removed when the Session goes (and back when it reconnects). In a buffer with no connection, or a file of another kind, it is not there at all: which-key does not offer it and it cannot shadow anything. `:IjBridge keys` (`<leader>ak`) lists what is bound here and says why a key is missing.
@@ -110,6 +112,16 @@ Standard features stay on LazyVim's own keys: `gd`, `grr`, `gI`, `gy`, `K` (goto
 ### Gradle tasks
 
 IntelliJ already knows the project's Gradle tasks; the Bridge lists them without running anything and runs one through IntelliJ's own Gradle integration (the project's settings, JVM and wrapper). `<leader>cg` (or `:IjBridge task`) opens a fuzzy finder: type any letters of the name in order (`eas`, `fMT` for the capitals of `findMysteriousTreasure`, `trea`), move with `<C-n>`/`<C-p>`, `<CR>` runs it. `<leader>cG` (`:IjBridge tasks`) shows the hierarchy, project then group then task, with descriptions; `<Tab>` folds, `<CR>` runs, `a` runs with arguments, `/` opens the finder. The output streams into a buffer at the bottom without taking your window, and ends with `✔ finished`, `✘ failed` or `■ cancelled`. `<leader>cb` runs the last again and `<leader>cB` stops the running one. One task runs at a time. A live status line (what IntelliJ's own Gradle tool window would show, e.g. "Executing task ':compileKotlin'") shows as a `winbar` on the output window while it runs.
+
+The finder puts whole-project **build** and **clean build** first before you type. Matching **All projects** entries precede individual project tasks, including tasks that exist only in subprojects. An all-projects choice uses a root Gradle task selector in one invocation; Gradle runs each selected task once.
+
+`:IjBridge sync` reloads the linked Gradle projects from any buffer attached to the project, including ordinary source files. `<leader>aj` or `:IjBridge refresh` separately asks IntelliJ to refresh project files from disk; indexing can continue afterward. Refresh preserves open Neovim buffers as the source of truth.
+
+### Diagnostic exclusions
+
+`:IjBridge diagnostics exclude` hides IntelliJ diagnostics for the current Neovim filetype. For `.md` files this is normally `markdown`. Existing diagnostics disappear immediately, and incoming ones stay hidden. Other diagnostic sources and bridge features are unaffected.
+
+`<leader>au` or `:IjBridge diagnostics exclusions` opens a menu to disable the current filetype or restore an excluded one. Exclusions persist across restarts in Neovim's state directory (`ij_bridge/diagnostic-exclusions.json`). Restoring a filetype redisplays cached diagnostics; `:IjBridge diagnostics list` always shows the raw IntelliJ report.
 
 ### Run Configurations
 

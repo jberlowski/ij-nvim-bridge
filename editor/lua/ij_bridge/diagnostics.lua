@@ -8,6 +8,8 @@ local M = {}
 local LEVELS = { error = 1, warn = 2, info = 3, hint = 4 }
 
 local level = 'hint' -- everything, as sent
+local excluded = {}
+local state_path
 local raw = {} -- [client_id][uri] = the params of the last publishDiagnostics
 
 function M.level()
@@ -16,10 +18,88 @@ end
 
 local function show(err, params, ctx)
   local limit = LEVELS[level]
+  local buf = vim.fn.bufnr(vim.uri_to_fname(params.uri))
+  local ft = buf >= 0 and vim.bo[buf].filetype or vim.filetype.match({ filename = vim.uri_to_fname(params.uri) })
   local kept = vim.tbl_filter(function(d)
-    return (d.severity or 1) <= limit
+    return not excluded[ft] and (d.severity or 1) <= limit
   end, params.diagnostics or {})
   vim.lsp.diagnostic.on_publish_diagnostics(err, vim.tbl_extend('force', params, { diagnostics = kept }), ctx)
+end
+
+local function reshow()
+  for client_id, uris in pairs(raw) do
+    if vim.lsp.get_client_by_id(client_id) then
+      for _, params in pairs(uris) do
+        show(nil, params, { client_id = client_id, method = 'textDocument/publishDiagnostics' })
+      end
+    end
+  end
+end
+
+function M.exclusions()
+  local names = vim.tbl_keys(excluded)
+  table.sort(names)
+  return names
+end
+
+function M.setup(opts)
+  opts = opts or {}
+  state_path = opts.state_path or (vim.fn.stdpath('state') .. '/ij_bridge/diagnostic-exclusions.json')
+  if vim.fn.filereadable(state_path) == 1 then
+    local ok, names = pcall(function() return vim.json.decode(table.concat(vim.fn.readfile(state_path), '\n')) end)
+    if ok and type(names) == 'table' then
+      for _, name in ipairs(names) do
+        if type(name) == 'string' and name ~= '' then excluded[name] = true end
+      end
+    else
+      vim.notify('ij-bridge: could not read diagnostic exclusions', vim.log.levels.WARN)
+    end
+  end
+  local group = vim.api.nvim_create_augroup('IjBridgeDiagnosticExclusions', { clear = true })
+  vim.api.nvim_create_autocmd('FileType', { group = group, callback = reshow })
+  reshow()
+end
+
+local function change(ft, value)
+  if not ft or ft == '' then
+    vim.notify('ij-bridge: this buffer has no filetype', vim.log.levels.WARN)
+    return false
+  end
+  if not state_path then M.setup() end
+  local previous = excluded[ft]
+  excluded[ft] = value or nil
+  local ok, err = pcall(function()
+    vim.fn.mkdir(vim.fn.fnamemodify(state_path, ':h'), 'p')
+    vim.fn.writefile({ vim.json.encode(M.exclusions()) }, state_path)
+  end)
+  if not ok then
+    excluded[ft] = previous
+    vim.notify('ij-bridge: could not save diagnostic exclusions: ' .. tostring(err), vim.log.levels.ERROR)
+    return false
+  end
+  reshow()
+  return true
+end
+
+function M.exclude(ft) return change(ft or vim.bo.filetype, true) end
+function M.include(ft) return change(ft, false) end
+
+function M.menu()
+  local ft = vim.bo.filetype
+  local items = {}
+  if ft ~= '' and not excluded[ft] then
+    items[#items + 1] = { label = 'Disable diagnostics for filetype: ' .. ft, ft = ft, disable = true }
+  end
+  for _, name in ipairs(M.exclusions()) do
+    items[#items + 1] = { label = 'Restore diagnostics for: ' .. name, ft = name }
+  end
+  if #items == 0 then
+    vim.notify('ij-bridge: no diagnostic exclusions; this buffer has no filetype')
+    return
+  end
+  vim.ui.select(items, { prompt = 'IntelliJ diagnostic exclusions', format_item = function(item) return item.label end }, function(item)
+    if item then change(item.ft, item.disable) end
+  end)
 end
 
 --- The `textDocument/publishDiagnostics` handler for a Session.

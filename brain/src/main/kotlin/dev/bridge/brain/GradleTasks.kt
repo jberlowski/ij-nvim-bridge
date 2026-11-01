@@ -245,7 +245,9 @@ class GradleTasks(private val project: Project, private val brain: BrainService)
                 try {
                     ExternalSystemUtil.refreshProject(path, ImportSpecBuilder(project, system)
                         .use(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
-                        .callback(object : ExternalProjectRefreshCallback {
+                        // callback(...) disables importing the resolved model. withCallback keeps
+                        // IntelliJ's normal import, including the new dependency classpath.
+                        .withCallback(object : ExternalProjectRefreshCallback {
                             override fun onSuccess(externalProject: DataNode<ProjectData>?) = done(null)
                             override fun onFailure(errorMessage: String, errorDetails: String?) = done(errorMessage)
                         }))
