@@ -23,7 +23,7 @@ ij-nvim-harness
 ├── i3                                     → geometry + tiling (§13)
 ├── Neovim 0.12.5 + LazyVim + blink.cmp    in an xterm on :99
 │     └── --listen 0.0.0.0:7777            ← drivable by RPC
-├── JDK 21 + Gradle 9.7.1
+├── JDK 21 + Gradle 9.8.2
 └── /work/fixture (spring-kotlin-mvc)
 ```
 
