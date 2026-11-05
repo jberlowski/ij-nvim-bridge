@@ -58,6 +58,7 @@ class BrainService(private val project: Project) : Disposable {
     val diagnostics = DiagnosticsPublisher(project, this).also { Disposer.register(this, it) }
     val formatting = Formatting(project)
     val navigation = NavigationEngine(project, this).also { Disposer.register(this, it) }
+    val projectContext = ProjectContext(project)
     val gradle = GradleTasks(project, this)
     val runConfigurations = RunConfigurations(project, this)
     val runnables = RunnablesPublisher(project, this).also { Disposer.register(this, it) }

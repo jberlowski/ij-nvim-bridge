@@ -110,6 +110,7 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                         put("serverInfo", buildJsonObject {
                             put("name", "ij-nvim-bridge"); put("version", pluginVersion())
                             put("session", this@Session.id)
+                            put("workspace", brain.projectContext.describe())
                             brain.record.path?.let { put("log", it.toString()) }
                         })
                     })
@@ -234,15 +235,18 @@ class Session(private val conn: SocketChannel, private val brain: BrainService) 
                     reply(id, JsonNull)
                 }
                 // Gradle tasks (FEATURES.md §6d): the tasks IntelliJ has imported, run through its own Gradle integration.
+                "\$/ij/projectContext" -> reply(id, com.intellij.openapi.application.ReadAction.compute<JsonElement, RuntimeException> {
+                    brain.projectContext.describe()
+                })
                 "\$/ij/tasks" -> reply(id, com.intellij.openapi.application.ReadAction.compute<JsonElement, RuntimeException> {
-                    brain.gradle.list()
+                    brain.gradle.list(params)
                 })
                 "\$/ij/task/run" -> reply(id, brain.gradle.run(params, transport))
                 "\$/ij/sync" -> reply(id, brain.gradle.sync(params, transport))
                 "\$/ij/task/cancel" -> reply(id, brain.gradle.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))
                 // IntelliJ Run Configurations (FEATURES.md §6c): named, saved, possibly .run/-persisted.
                 "\$/ij/runConfigurations" -> reply(id, com.intellij.openapi.application.ReadAction.compute<JsonElement, RuntimeException> {
-                    brain.runConfigurations.list()
+                    brain.runConfigurations.list(params)
                 })
                 "\$/ij/runConfiguration/run" -> reply(id, brain.runConfigurations.run(params, transport))
                 "\$/ij/runConfiguration/cancel" -> reply(id, brain.runConfigurations.cancel(params["runId"]?.jsonPrimitive?.contentOrNull))

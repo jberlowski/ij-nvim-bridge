@@ -16,7 +16,7 @@ SHAPES = f"{SRC}/probe/Shapes.kt"
 def open_project_buffer(nvim):
     nvim.command(f"edit {SHAPES}")
     wait_until(lambda: attached(nvim) == 1, message="never attached")
-    wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ", timeout=120, interval=2,
+    wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ: spring-kotlin-mvc", timeout=120, interval=2,
                message="never Ready")
     # The task model is loaded by the import: ask until the IDE has it.
     wait_until(lambda: nvim.exec_lua("""

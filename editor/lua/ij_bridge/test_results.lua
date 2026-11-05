@@ -369,7 +369,7 @@ end
 
 -- ------------------------------------------------------------------- a run, as it comes in
 --- A new run: a fresh tree and panes (the same two buffers are reused by name).
-function M.start(run_id, project_root)
+function M.start(run_id, project_root, context)
   vim.diagnostic.reset(diag_ns)
   local old = M.run
   local tree_buf = old and old.tree_buf and vim.api.nvim_buf_is_valid(old.tree_buf) and old.tree_buf or nil
@@ -380,6 +380,11 @@ function M.start(run_id, project_root)
     tree_buf = tree_buf or make_buf('IntelliJ Test results', 'ij-bridge-test-results'),
     log_buf = log_buf or make_buf('IntelliJ Test log', 'ij-bridge-test-log'),
   }
+  if context then
+    local project = require('ij_bridge.project')
+    project.bind(M.run.tree_buf, context)
+    project.bind(M.run.log_buf, context)
+  end
   if first then
     keymaps(M.run)
   else

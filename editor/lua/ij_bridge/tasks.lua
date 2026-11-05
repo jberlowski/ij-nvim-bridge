@@ -6,11 +6,13 @@
 --   run(item)   runs a task and streams its output into a buffer, with how it ended
 --   stop()      cancels the one that is running        repeat_last()   runs the last one again
 local log = require('ij_bridge.log')
+local project = require('ij_bridge.project')
 
 local M = {}
 
 --- The last task run: { path, tasks, args }, for repeating it.
 M.last = nil
+M.history = {}
 
 --- The run whose output is coming in: { id, buf, pending, task }.
 M.run_state = nil
@@ -26,7 +28,7 @@ end
 --- is the one for the root the tasks were last asked about; anywhere else, no connection is none.
 local function client()
   local ij = require('ij_bridge')
-  local c = ij.client(0)
+  local c = ij.client(0) or project.client(project.for_buffer(0))
   if c then
     M.root = c.config.root_dir
     return c
@@ -47,11 +49,13 @@ function M.fetch(callback)
     say('no IntelliJ is serving this project (:IjBridge open)', vim.log.levels.WARN)
     return
   end
-  c:request('$/ij/tasks', {}, function(err, result)
+  local context = project.for_buffer(0)
+  c:request('$/ij/tasks', project.params(context), function(err, result)
     if err then
       say(err.message, vim.log.levels.WARN)
       return
     end
+    result.context = context
     callback(result)
   end, 0)
 end
@@ -64,7 +68,7 @@ function M.flatten(tree)
       for _, task in ipairs(group.tasks or {}) do
         table.insert(out, {
           name = task.name, group = group.name, project = project.name, path = project.path,
-          description = task.description,
+          description = task.description, context = tree.context,
         })
       end
     end
@@ -91,11 +95,11 @@ function M.picker_items(tree)
     end
     for name, item in pairs(names) do
       table.insert(items, { name = name, path = root.path, project = root.name,
-        group = item.group, description = item.description, aggregate = true, tasks = { name } })
+        group = item.group, description = item.description, context = tree.context, aggregate = true, tasks = { name } })
     end
     if names.build and names.clean then
       table.insert(items, { name = 'clean build', path = root.path, project = root.name,
-        group = 'All projects', aggregate = true, tasks = { 'clean', 'build' } })
+        group = 'All projects', context = tree.context, aggregate = true, tasks = { 'clean', 'build' } })
     end
   end
   return items
@@ -131,7 +135,7 @@ function M.pick(on_choose)
       return
     end
     require('ij_bridge.picker').open(items, {
-      title = 'Gradle task',
+      title = 'Gradle task — ' .. (tree.context and tree.context.label or ''),
       rank = M.rank,
       label = function(item) return item.name end,
       -- The name is what is matched first; the group and project too, at less weight.
@@ -199,7 +203,8 @@ end
 
 --- Run a task. `item` is { path, name } (from the finder or the tree); `args` are extra Gradle arguments.
 function M.run(item, args)
-  local c = client()
+  local context = item.context or project.for_buffer(0)
+  local c = project.client(context)
   if not c then
     say('no IntelliJ is serving this project (:IjBridge open)', vim.log.levels.WARN)
     return
@@ -210,12 +215,14 @@ function M.run(item, args)
       say(err.message, vim.log.levels.WARN)
       return
     end
-    M.last = { path = item.path, name = item.name, tasks = item.tasks, args = args }
+    M.last = { path = item.path, name = item.name, tasks = item.tasks, args = args, context = context }
+    M.history[project.key(context)] = M.last
     local buf = output_buffer()
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '' })
     vim.bo[buf].modifiable = false
-    M.run_state = { id = result.runId, buf = buf, task = item.name }
+    M.run_state = { id = result.runId, buf = buf, task = item.name, context = context }
+    project.bind(buf, context)
     append(buf, ('▶ gradle %s%s   (%s)\n\n'):format(item.name, args and (' ' .. table.concat(args, ' ')) or '', item.path))
     show(buf)
     log.info('task_started', { task = item.name, run = result.runId })
@@ -278,7 +285,7 @@ function M.sync()
   if not c then
     return say('no IntelliJ is serving this buffer', vim.log.levels.WARN)
   end
-  c:request('$/ij/sync', {}, function(err)
+  c:request('$/ij/sync', project.params(project.for_buffer(0)), function(err)
     if err then
       say('sync: ' .. (err.message or 'refused'), vim.log.levels.WARN)
     else
@@ -308,11 +315,10 @@ function M.on_sync_finished(params)
 end
 
 function M.stop()
-  local c = client()
-  if not c then
-    return
-  end
-  c:request('$/ij/task/cancel', {}, function(err, result)
+  local state = M.run_state
+  local c = state and not state.finished and project.client(state.context)
+  if not c then return say('no Gradle task is running') end
+  c:request('$/ij/task/cancel', { runId = state.id }, function(err, result)
     if err then
       say(err.message, vim.log.levels.WARN)
     elseif not (result and result.cancelled) then
@@ -322,11 +328,9 @@ function M.stop()
 end
 
 function M.repeat_last()
-  if not M.last then
-    say('no task has been run yet')
-    return
-  end
-  M.run({ path = M.last.path, name = M.last.name, tasks = M.last.tasks }, M.last.args)
+  local last = M.history[project.key(project.for_buffer(0))]
+  if not last then return say('no task has been run in this build yet') end
+  M.run(last, last.args)
 end
 
 -- ---------------------------------------------------------------------- tree
@@ -354,7 +358,7 @@ local function render_tree(state)
         add(('%s  %s %s'):format(pad, gopen and '▾' or '▸', group.name), { kind = 'group', id = gid }, ('%d tasks'):format(#group.tasks))
         if gopen then
           for _, task in ipairs(group.tasks) do
-            add(('%s      %s'):format(pad, task.name), { kind = 'task', item = { name = task.name, path = p.path, group = group.name, project = p.name } }, task.description)
+            add(('%s      %s'):format(pad, task.name), { kind = 'task', item = { name = task.name, path = p.path, group = group.name, project = p.name, context = state.tree.context } }, task.description)
           end
         end
       end
@@ -450,6 +454,7 @@ function M.tree()
       map('q', '<cmd>close<cr>', 'close')
     end
     state.tree = tree
+    project.bind(state.buf, tree.context)
     redraw()
     if #vim.fn.win_findbuf(state.buf) == 0 then
       vim.cmd('botright 20split')

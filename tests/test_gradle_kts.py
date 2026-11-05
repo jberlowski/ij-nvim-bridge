@@ -147,12 +147,12 @@ class TestThroughNeovim:
         nvim.command(f"edit {BUILD}")
         wait_until(lambda: attached(nvim) == 1, message="never attached")
         assert nvim.eval("&filetype") == "kotlin", "a Gradle Kotlin script is a `kotlin` file, so the Kotlin keys apply"
-        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ", timeout=120, interval=2)
+        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ: spring-kotlin-mvc", timeout=120, interval=2)
 
     def test_hover_definition_and_completion_through_the_builtins(self, nvim):
         nvim.command(f"edit {BUILD}")
         wait_until(lambda: attached(nvim) == 1)
-        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ", timeout=120, interval=2)
+        wait_until(lambda: nvim.exec_lua("return require('ij_bridge').statusline()") == "IJ: spring-kotlin-mvc", timeout=120, interval=2)
         lines = nvim.current.buffer[:]
         row = next(i for i, l in enumerate(lines) if "mavenCentral" in l)
         nvim.current.window.cursor = (row + 1, lines[row].index("mavenCentral") + 3)

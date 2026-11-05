@@ -32,7 +32,7 @@ These are invariants. A design that violates one is wrong, not a trade-off.
 
 **The Editor owns the bytes.** The Editor's buffer is the Source of Truth. The Mirror follows it. Disk follows it. Nothing else may claim authorship of text.
 
-**Dormant is normal.** Most files the developer opens are not in a Project Root. In that state nvim must behave exactly as if the Bridge were not installed — no errors, no latency, no surprises.
+**Dormant is normal.** Most files the developer opens are not in a Project Root. In that state the Bridge performs no code operations. The connection indicator shows `IJ: dormant`; there are no errors or switch popups.
 
 ## 4. Architecture
 
@@ -69,6 +69,19 @@ The Editor resolves a buffer by **longest-prefix match** of its absolute path ag
 `$XDG_RUNTIME_DIR` is unset on WSL without systemd. The fallback path is not optional.
 
 Registry entries are validated by liveness (`pid` alive **and** socket connectable) before use, and stale entries are pruned by whichever side notices first.
+
+### 4.2a Several builds in one IntelliJ workspace
+
+A Project Root identifies the IntelliJ workspace, which may have several
+independent linked Gradle builds. One socket/Session can serve them all. The Brain
+reports imported build roots in `initialize.serverInfo.workspace` and
+`$/ij/projectContext`; the Editor never infers them from build files or cwd.
+New project commands follow the current buffer's most specific enclosing build.
+`$/ij/tasks`, `$/ij/sync`, and `$/ij/runConfigurations` accept `textDocument.uri`
+for this context; requests without context retain their workspace-wide behavior.
+Run configurations include IDE `id` and external `path`; execution can select both.
+The statusline identifies the workspace and active build, e.g. `IJ: projects / A`.
+See [the agreed behavior and acceptance matrix](docs/multiple-builds.md).
 
 ### 4.3 Wire protocol
 

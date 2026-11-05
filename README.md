@@ -4,7 +4,7 @@ Neovim borrowing the code intelligence of the IntelliJ that is already open on y
 
 **Proof of concept, alpha quality.** A personal project, built and tested against one pinned IntelliJ major on one machine shape (macOS harness, WSL2 target) — expect rough edges, and treat any interface here as free to change without notice.
 
-**Status: past the Spike ([SPEC.md §11](./SPEC.md)), built and daily-drivable.** Sessions, Mirrors and streaming completion; diagnostics and the Indexing state; navigation, symbols and hover; formatting, organize imports, code actions, rename, generate code and new-file templates; Gradle tasks and IntelliJ Run Configurations (Gradle-backed); test navigation and running; format-on-save; several Neovims and several IntelliJs at once. See [FEATURES.md](./FEATURES.md) for exactly what's built and what's queued next.
+**Status: past the Spike ([SPEC.md §11](./SPEC.md)), built and daily-drivable.** Sessions, Mirrors and streaming completion; diagnostics and the Indexing state; navigation, symbols and hover; formatting, organize imports, code actions, rename, generate code and new-file templates; Gradle tasks and IntelliJ Run Configurations (Gradle-backed); test navigation and running; format-on-save; several Neovims and several IntelliJs at once; multiple independent Gradle builds in one IntelliJ workspace, with visible per-buffer routing. See [FEATURES.md](./FEATURES.md) for exactly what's built and what's queued next.
 
 ```
 make image       build the harness image
@@ -13,6 +13,8 @@ make brain       build the Brain plugin
 make test        run the full suite (needs `make canary brain` first)
 make harness     leave a container up; watch at localhost:6080
 ```
+
+Open a parent directory in IntelliJ and link its Gradle builds. Neovim follows the active file’s build for tasks, sync and Run Configurations, and shows `IJ: workspace / build`. See [setup](editor/README.md#one-intellij-window-for-multiple-projects) and [the design and acceptance matrix](docs/multiple-builds.md).
 
 ## Why not an existing option
 

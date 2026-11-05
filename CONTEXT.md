@@ -41,6 +41,12 @@ _Avoid_: in sync, up to date
 **Project Root**:
 The directory a Brain instance has open as a project. The Brain is the authority on what its own roots are — the Editor never guesses them.
 
+**IntelliJ Workspace**:
+The project open in one IntelliJ window. It may contain several independent builds.
+
+**Build Root**:
+The directory of a build imported into an IntelliJ Workspace. A file belongs to the most specific enclosing Build Root reported by the Brain.
+
 **Registry**:
 The index the Brain publishes mapping each Project Root to the socket serving it. How the Editor discovers which Brain, if any, can answer for a given file.
 
@@ -49,7 +55,7 @@ The Bridge's standing constraint that nothing it does to communicate may require
 _Avoid_: rootless, userspace
 
 **Session**:
-One Editor connected to one Brain for one project. A single Neovim may hold several, one per project it has files open from.
+One Editor connected to one Brain for one IntelliJ Workspace, which may contain several Build Roots. A single Neovim may hold several Sessions for separate IntelliJ Workspaces.
 
 **Dormant**:
 The Bridge's state when a buffer matches no Project Root in the Registry. Neovim behaves exactly as if the Bridge were not installed. The normal, expected state for most files.

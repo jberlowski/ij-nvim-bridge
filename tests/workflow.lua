@@ -33,7 +33,10 @@ assert(by_group[1].item.aggregate and by_group[1].item.name == 'build')
 assert(not by_group[2].item.aggregate, 'an aggregate group-only match must not outrank an exact subproject task')
 picker.current.close()
 local sent
-local fake = { config = { root_dir = '/project' }, request = function(_, method, params) sent = params end }
+local fake = { id = 42, config = { root_dir = '/project' },
+  is_stopped = function() return false end,
+  request = function(_, method, params) sent = params end }
+vim.lsp.get_client_by_id = function(id) return id == fake.id and fake or nil end
 require('ij_bridge').client = function() return fake end
 tasks.run({ name = 'clean build', path = '/project', tasks = { 'clean', 'build' } })
 assert(vim.deep_equal(sent.tasks, { 'clean', 'build' }), 'clean/build must be separate task arguments')

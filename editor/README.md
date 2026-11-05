@@ -62,6 +62,27 @@ never leaves "not ready", the project is likely still importing or indexing;
 Nothing else is required — no port, no host, no manual "start the server":
 the Brain and the Registry it publishes to are found automatically per project.
 
+### One IntelliJ window for multiple projects
+
+Open the parent directory in IntelliJ and link/import each independent Gradle
+build there. Neovim can start in any child directory. Commands follow the active
+file: editing A shows A's tasks and Run Configurations; editing B selects B.
+`:cd` does not select a build. A file outside the imported builds cannot silently
+run a sibling's commands.
+
+The connection label is installed in lualine (or appended to a plain statusline)
+by default: `IJ: projects / A` changes to `IJ: projects / B` when you switch files.
+Indexing and disconnection remain visible; outside a workspace it shows
+`IJ: dormant`. `:IjBridge` includes full workspace and build paths. If you manage
+the component yourself, use `setup({ connection_indicator = false })` and add
+`require('ij_bridge').statusline` to your statusline.
+
+Pickers retain their originating project. Repeat selects the last run for the
+current build; stop targets the recorded running operation. Output keeps the
+originating project label after you switch files. Run Configurations must already
+be known to the parent IntelliJ workspace and reference their own Gradle build.
+Only Gradle-backed configurations can currently execute.
+
 ### Optional: where IntelliJ itself lives
 
 Two separate settings, both machine- or user-specific, so both prefer an
@@ -115,7 +136,7 @@ IntelliJ already knows the project's Gradle tasks; the Bridge lists them without
 
 The finder puts whole-project **build** and **clean build** first before you type. Matching **All projects** entries precede individual project tasks, including tasks that exist only in subprojects. An all-projects choice uses a root Gradle task selector in one invocation; Gradle runs each selected task once.
 
-`:IjBridge sync` reloads the linked Gradle projects from any buffer attached to the project, including ordinary source files. `<leader>aj` or `:IjBridge refresh` separately asks IntelliJ to refresh project files from disk; indexing can continue afterward. Refresh preserves open Neovim buffers as the source of truth.
+`:IjBridge sync` reloads the current file’s owning Gradle build from any buffer attached to the project, including ordinary source files. `<leader>aj` or `:IjBridge refresh` separately asks IntelliJ to refresh project files from disk; indexing can continue afterward. Refresh preserves open Neovim buffers as the source of truth.
 
 ### Diagnostic exclusions
 

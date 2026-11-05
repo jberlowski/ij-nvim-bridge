@@ -69,11 +69,18 @@ class RunConfigurations(private val project: Project, private val brain: BrainSe
     private val current = AtomicReference<Run?>()
 
     /** Must run in a read action. */
-    fun list(): JsonElement = buildJsonObject {
-        val all = RunManager.getInstance(project).allSettings
+    fun list(params: JsonObject = buildJsonObject {}): JsonElement = buildJsonObject {
+        val build = if (brain.projectContext.roots().isEmpty()) null else brain.projectContext.build(params)
+        val all = RunManager.getInstance(project).allSettings.filter { s ->
+            build == null || (s.configuration !is ExternalSystemRunConfiguration && brain.projectContext.roots().size == 1) ||
+                (s.configuration as? ExternalSystemRunConfiguration)?.settings?.externalProjectPath
+                ?.let { brain.projectContext.owning(it) == build } == true
+        }
         put("configurations", JsonArray(all.map { s ->
             buildJsonObject {
+                put("id", s.uniqueID)
                 put("name", s.name)
+                (s.configuration as? ExternalSystemRunConfiguration)?.settings?.externalProjectPath?.let { put("path", it) }
                 put("type", s.type.displayName)
                 put("gradle", s.configuration is ExternalSystemRunConfiguration)
             }
@@ -83,8 +90,18 @@ class RunConfigurations(private val project: Project, private val brain: BrainSe
 
     fun run(params: JsonObject, transport: Transport): JsonElement {
         val name = params["name"]?.jsonPrimitive?.contentOrNull ?: throw Rename.Refused("no configuration name given")
-        val settings = RunManager.getInstance(project).findConfigurationByName(name)
-            ?: throw Rename.Refused("no run configuration named '$name'")
+        val build = if (brain.projectContext.roots().isEmpty()) null else brain.projectContext.build(params)
+        val identity = params["id"]?.jsonPrimitive?.contentOrNull
+        val path = params["path"]?.jsonPrimitive?.contentOrNull
+        val matches = RunManager.getInstance(project).allSettings.filter { s ->
+            (if (identity != null) s.uniqueID == identity else s.name == name) &&
+                (build == null || (s.configuration as? ExternalSystemRunConfiguration)?.settings?.externalProjectPath
+                    ?.let { brain.projectContext.owning(it) == build } == true) &&
+                (path == null || (s.configuration as? ExternalSystemRunConfiguration)?.settings?.externalProjectPath
+                    ?.let { ProjectContext.canonical(it) == ProjectContext.canonical(path) } == true)
+        }
+        val settings = matches.singleOrNull() ?: throw Rename.Refused(
+            if (matches.isEmpty()) "no run configuration named '$name'" else "ambiguous run configuration '$name'; select its identity and build")
         val es = settings.configuration as? ExternalSystemRunConfiguration
             ?: throw Rename.Refused("'$name' is not a Gradle-backed configuration; only those can be run so far")
 

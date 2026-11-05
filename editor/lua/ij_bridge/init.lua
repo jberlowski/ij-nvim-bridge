@@ -67,6 +67,15 @@ function M.on_status(client_id, params)
   M.status_events = M.status_events + 1
   -- What IntelliJ would have said may change when it stops or finishes indexing.
   require('ij_bridge.blink').clear_cache()
+  local c = vim.lsp.get_client_by_id(client_id)
+  if c then
+    c:request('$/ij/projectContext', {}, function(err, workspace)
+      if not err and M.sessions[client_id] then
+        M.sessions[client_id].workspace = workspace
+        vim.cmd.redrawstatus()
+      end
+    end)
+  end
   vim.api.nvim_exec_autocmds('User', { pattern = 'IjBridgeStatus', modeline = false, data = params })
   vim.cmd.redrawstatus()
 end
@@ -74,10 +83,13 @@ end
 --- The Brain's state for the buffer's Session, or nil when Dormant / not attached.
 function M.status(buf)
   local client = M.client(buf or 0)
+  if not client then
+    client = require('ij_bridge.project').client(require('ij_bridge.project').for_buffer(buf or 0))
+  end
   return client and M.states[client.id] or nil
 end
 
---- For a statusline. Empty when Dormant, so it costs nothing outside a project.
+--- Persistent connection identity, including the active imported build.
 --- Indexing is always visible and never silent: the developer must be able to see
 --- why completion and diagnostics have gone quiet.
 ---   lualine: sections = { lualine_x = { require('ij_bridge').statusline } }
@@ -92,12 +104,12 @@ function M.statusline()
     end
     -- A buffer that should be Mirrored but has no Session: the Brain went away.
     local buf = vim.api.nvim_get_current_buf()
-    return (M.attached[buf] and not M.client(buf)) and 'IJ: disconnected' or ''
+    return (M.attached[buf] and not M.client(buf)) and 'IJ: disconnected' or 'IJ: dormant'
   end
-  if status.state == 'Ready' then
-    return 'IJ'
-  end
-  return 'IJ: ' .. (reasons[status.reason] or 'not ready')
+  local context = require('ij_bridge.project').for_buffer(0)
+  local label = 'IJ: ' .. (context and context.label or 'connected')
+  if status.state == 'Ready' then return label end
+  return label .. ' (' .. (reasons[status.reason] or 'not ready') .. ')'
 end
 
 local function buftype_ok(buf)
@@ -207,6 +219,7 @@ local function connect(buf, entry)
       require('ij_bridge.inlay_hints').on_client(client)
       local info = result and result.serverInfo or {}
       M.sessions[client.id] = info
+      vim.cmd.redrawstatus()
       require('ij_bridge.caret').on_client(client)
       log.info('session', { client = client.id, session = info.session, brain_log = info.log, brain = info.version })
     end,
@@ -615,7 +628,9 @@ function M.show_status()
     local state = not status and 'state not reported yet'
       or status.state == 'Ready' and 'ready'
       or (reasons[status.reason] or 'not ready')
-    print(('ij-bridge: attached to %s (%s), %s'):format(entry.root, entry.ide or '?', state))
+    local context = require('ij_bridge.project').for_buffer(buf)
+    local build = context and context.build and ('; build ' .. context.build) or '; no imported Gradle build'
+    print(('ij-bridge: attached to %s (%s)%s, %s'):format(entry.root, entry.ide or '?', build, state))
   elseif M.attached[buf] then
     print(('ij-bridge: disconnected from %s; reconnecting'):format(entry.root or '?'))
   else
@@ -668,6 +683,7 @@ function M.report()
     ('nvim %d.%d.%d, %s %s %s'):format(v.major, v.minor, v.patch, uname.sysname, uname.release, uname.machine),
     'buffer: ' .. vim.api.nvim_buf_get_name(0),
     'statusline: ' .. M.statusline(),
+    'project context: ' .. vim.inspect(require('ij_bridge.project').for_buffer(0)),
     'offline: ' .. vim.inspect(M.offline),
     'attached buffers: ' .. vim.inspect(vim.tbl_keys(M.attached)),
     'sessions: ' .. vim.inspect(M.sessions),
@@ -717,6 +733,7 @@ function M.setup(opts)
       end
       local was_attached = M.client(args.buf) ~= nil
       M.attach(args.buf)
+      vim.cmd.redrawstatus()
       require('ij_bridge.caret').touch(args.buf) -- a buffer just entered: where its cursor is
       if was_attached then
         focus(args.buf)
@@ -852,6 +869,7 @@ function M.setup(opts)
   })
 
   require('ij_bridge.keys').setup(opts)
+  require('ij_bridge.indicator').setup(group)
 
   M.attach(vim.api.nvim_get_current_buf())
 end

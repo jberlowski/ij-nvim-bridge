@@ -52,7 +52,7 @@ def pytest_collection_modifyitems(items):
     def group(item):
         name = item.module.__name__.rsplit(".", 1)[-1]
         # test_multi opens a second project in the Bridge's IDE, which then stays: it goes last.
-        return {"test_lifecycle": 0, "test_harness_sufficiency": 1, "test_multi": 3}.get(name, 2)
+        return {"test_lifecycle": 0, "test_harness_sufficiency": 1, "test_multi": 3, "test_workspace_projects": 4}.get(name, 2)
     items.sort(key=group)
 
 
@@ -334,12 +334,12 @@ EDITOR_DIR = REPO_ROOT / "editor"
 EDITOR_GUEST = "/home/dev/ij-nvim-bridge/editor"
 
 
-def start_nvim(container, wait_for_blink: bool = True, slot: int = 1):
+def start_nvim(container, wait_for_blink: bool = True, slot: int = 1, cwd: str = FIXTURE_PROJECT):
     """Neovim (LazyVim, blink.cmp) running the Editor plugin. `slot` 2 is a second Neovim in the same container."""
     c = container
     c.copy_in(EDITOR_DIR, EDITOR_GUEST)
     e = Editor(c, slot=slot)
-    e.launch(cwd=FIXTURE_PROJECT)
+    e.launch(cwd=cwd)
     nv = e.attach(timeout=120)
     nv.harness_editor = e          # so a test can close this Neovim, as a developer would
     # Neovim is listening before lazy.nvim has finished loading its plugins.
@@ -465,7 +465,7 @@ def pytest_runtest_makereport(item, call):
     if not report.failed:
         return
     stem = item.name if report.when == "call" else f"{item.name}.{report.when}"
-    c = item.funcargs.get("container") or item.funcargs.get("bridge_container")
+    c = item.funcargs.get("container") or item.funcargs.get("bridge_container") or item.funcargs.get("workspace_container")
     if c is None:
         return
     try:

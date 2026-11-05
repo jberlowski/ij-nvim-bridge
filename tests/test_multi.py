@@ -75,7 +75,7 @@ def open_file(nvim, path: str, ready: bool = True):
     nvim.command(f"edit {path}")
     wait_until(lambda: attached(nvim) == 1, timeout=60, message=f"{path} never attached")
     if ready:
-        wait_until(lambda: statusline(nvim) == "IJ", timeout=300, interval=2,
+        wait_until(lambda: statusline(nvim) == "IJ: spring-kotlin-mvc", timeout=300, interval=2,
                    message=f"{path}: the Brain never became Ready (status {statusline(nvim)!r})")
 
 
@@ -154,7 +154,7 @@ class TestOpen:
         nvim.command("IjBridge open")
         wait_until(lambda: attached(nvim) == 1, timeout=240, interval=2,
                    message="the buffer never attached to the IDE that was started: " + nvim.command_output("messages")[-500:])
-        wait_until(lambda: statusline(nvim) == "IJ", timeout=300, interval=2,
+        wait_until(lambda: statusline(nvim) == "IJ: spring-kotlin-mvc", timeout=300, interval=2,
                    message=f"never Ready: {statusline(nvim)!r}")
         assert root_of(nvim) == P2
         assert brain_state(nvim)["root"] == P2
@@ -270,9 +270,9 @@ class TestOneNeovimTwoProjects:
     def test_the_statusline_follows_the_buffer(self, nvim, projects):
         open_file(nvim, ONE_USE)
         open_file(nvim, TWO_USE)
-        assert statusline(nvim) == "IJ"
+        assert statusline(nvim) == "IJ: spring-kotlin-mvc"
         nvim.command("edit /tmp/not-a-project-at-all.txt")
-        assert statusline(nvim) == "", "outside every project: nothing"
+        assert statusline(nvim) == "IJ: dormant", "outside every project: nothing"
 
 
 # ====================================================== 2. two Neovims, one project

@@ -9,11 +9,13 @@
 -- Output streams into a buffer, as Gradle tasks do (`tasks.lua`); per-test results become signs
 -- (`runnables.lua`) and lines here.
 local log = require('ij_bridge.log')
+local project = require('ij_bridge.project')
 
 local M = {}
 
 --- The last run's own params, for `repeat_last()`: { buf, uri, position, scope }.
 M.last = nil
+M.history = {}
 
 --- The run whose output is coming in, and which buffer its signs belong to: { run_id, buf }.
 M.current = nil
@@ -78,27 +80,38 @@ function M.output_buffer_for_tests()
 end
 
 -- ------------------------------------------------------------------- running
-local function do_run(buf, uri, position, scope)
+local function release_temporary(buf)
+  if vim.api.nvim_buf_is_valid(buf) and buf ~= vim.api.nvim_get_current_buf() and not vim.bo[buf].modified then
+    require('ij_bridge').detach(buf)
+  end
+end
+
+local function do_run(buf, uri, position, scope, temporary)
   local client = require('ij_bridge').client(buf)
   if not client then
+    if temporary then release_temporary(buf) end
     say('no IntelliJ connection', vim.log.levels.WARN)
     return
   end
+  local context = project.for_buffer(buf)
   client:request('$/ij/run', { textDocument = { uri = uri }, position = position, scope = scope }, function(err, result)
     if err then
+      if temporary then release_temporary(buf) end
       say(err.message, vim.log.levels.WARN)
       return
     end
     M.last = { buf = buf, uri = uri, position = position, scope = scope }
-    M.current = { run_id = result.runId, buf = buf }
+    M.history[project.key(context)] = M.last
+    M.current = { run_id = result.runId, buf = buf, context = context, temporary = temporary }
     local obuf = output_buffer()
+    project.bind(obuf, context)
     vim.bo[obuf].modifiable = true
     vim.api.nvim_buf_set_lines(obuf, 0, -1, false, { '' })
     vim.bo[obuf].modifiable = false
-    append(obuf, ('▶ %s test run\n\n'):format(scope))
+    append(obuf, ('▶ %s — %s test run\n\n'):format(context.label, scope))
     -- The results tree and the log of the selected test are what is shown; the raw Gradle log is still kept
     -- here, for `show_raw_log()`.
-    require('ij_bridge.test_results').start(result.runId, client.config.root_dir)
+    require('ij_bridge.test_results').start(result.runId, context.build or context.root, context)
     log.info('test_run_started', { run = result.runId, scope = scope })
   end, buf)
 end
@@ -129,19 +142,25 @@ function M.show_raw_log()
 end
 
 function M.repeat_last()
-  if not M.last then
-    say('no test has been run yet')
+  local last = M.history[project.key(project.for_buffer(0))]
+  if not last then
+    say('no test has been run in this build yet')
     return
   end
-  do_run(M.last.buf, M.last.uri, M.last.position, M.last.scope)
+  local buf = vim.fn.bufadd(vim.uri_to_fname(last.uri))
+  vim.fn.bufload(buf)
+  local ij = require('ij_bridge')
+  local temporary = ij.client(buf) == nil
+  ij.attach(buf)
+  do_run(buf, last.uri, last.position, last.scope, temporary)
 end
 
 function M.cancel()
-  local client = require('ij_bridge').client(0)
+  local client = M.current and project.client(M.current.context)
   if not client then
     return
   end
-  client:request('$/ij/run/cancel', {}, function(err, result)
+  client:request('$/ij/run/cancel', { runId = M.current.run_id }, function(err, result)
     if err then
       say(err.message, vim.log.levels.WARN)
     elseif not (result and result.cancelled) then
@@ -189,6 +208,7 @@ function M.on_finished(params)
   log.info('test_run_finished', { run = params.runId, success = params.success, cancelled = params.cancelled, ms = params.ms })
   vim.notify('ij-bridge: test run ' .. summary:sub(3), params.success and vim.log.levels.INFO or vim.log.levels.WARN)
   if M.current and M.current.run_id == params.runId then
+    if M.current.temporary then release_temporary(M.current.buf) end
     M.current = nil
   end
   vim.api.nvim_exec_autocmds('User', { pattern = 'IjBridgeTestRunFinished', modeline = false, data = params })

@@ -9,11 +9,13 @@
 --   run(item)       runs one and streams its output into a buffer, with a live status and how it ended
 --   stop()          cancels the one running          repeat_last()   runs the last one again
 local log = require('ij_bridge.log')
+local project = require('ij_bridge.project')
 
 local M = {}
 
 --- The last one run: { name }, for repeating it.
 M.last = nil
+M.history = {}
 
 --- The run whose output is coming in: { id, buf, name }.
 M.run_state = nil
@@ -23,7 +25,7 @@ local function say(msg, level)
 end
 
 local function client()
-  local c = require('ij_bridge').client(0)
+  local c = require('ij_bridge').client(0) or project.client(project.for_buffer(0))
   if not c then
     say('no IntelliJ is serving this project (:IjBridge open)', vim.log.levels.WARN)
   end
@@ -35,11 +37,13 @@ function M.fetch(callback)
   if not c then
     return
   end
-  c:request('$/ij/runConfigurations', {}, function(err, result)
+  local context = project.for_buffer(0)
+  c:request('$/ij/runConfigurations', project.params(context), function(err, result)
     if err then
       say(err.message, vim.log.levels.WARN)
       return
     end
+    for _, item in ipairs(result.configurations or {}) do item.context = context end
     callback(result.configurations or {})
   end, 0)
 end
@@ -52,7 +56,7 @@ function M.pick()
       return
     end
     require('ij_bridge.picker').open(items, {
-      title = 'Run configuration',
+      title = 'Run configuration — ' .. (items[1].context and items[1].context.label or ''),
       label = function(item) return item.name .. (item.gradle and '' or '  (not runnable yet)') end,
       texts = function(item) return item.name, item.type end,
       detail = function(item) return item.type end,
@@ -132,46 +136,45 @@ end
 
 --- `item` is { name }, from the finder.
 function M.run(item)
-  local c = client()
+  local context = item.context or project.for_buffer(0)
+  local c = project.client(context)
   if not c then
     return
   end
-  c:request('$/ij/runConfiguration/run', { name = item.name }, function(err, result)
+  local params = project.params(context)
+  params.name, params.id, params.path = item.name, item.id, item.path
+  c:request('$/ij/runConfiguration/run', params, function(err, result)
     if err then
       say(err.message, vim.log.levels.WARN)
       return
     end
-    M.last = { name = item.name }
+    M.last = { name = item.name, id = item.id, path = item.path, context = context }
+    M.history[project.key(context)] = M.last
     local buf = output_buffer()
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '' })
     vim.bo[buf].modifiable = false
-    M.run_state = { id = result.runId, buf = buf, name = item.name }
-    append(buf, ('▶ %s\n\n'):format(item.name))
+    M.run_state = { id = result.runId, buf = buf, name = item.name, context = context }
+    project.bind(buf, context)
+    append(buf, ('▶ %s — %s\n\n'):format(context.label, item.name))
     show(buf)
     log.info('run_configuration_started', { name = item.name, run = result.runId })
   end, 0)
 end
 
 function M.repeat_last()
-  if not M.last then
-    say('no run configuration has been run yet')
-    return
-  end
-  M.run(M.last)
+  local last = M.history[project.key(project.for_buffer(0))]
+  if not last then return say('no run configuration has been run in this build yet') end
+  M.run(last)
 end
 
 function M.stop()
-  local c = client()
-  if not c then
-    return
-  end
-  c:request('$/ij/runConfiguration/cancel', {}, function(err, result)
-    if err then
-      say(err.message, vim.log.levels.WARN)
-    elseif not (result and result.cancelled) then
-      say('no run configuration is running')
-    end
+  local state = M.run_state
+  local c = state and not state.finished and project.client(state.context)
+  if not c then return end
+  c:request('$/ij/runConfiguration/cancel', { runId = state.id }, function(err, result)
+    if err then say(err.message, vim.log.levels.WARN)
+    elseif not (result and result.cancelled) then say('no run configuration is running') end
   end, 0)
 end
 

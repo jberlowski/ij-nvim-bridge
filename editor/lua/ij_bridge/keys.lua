@@ -177,6 +177,11 @@ local function bind_buffer(buf)
 end
 
 function M.unbind_buffer(buf)
+  -- LspDetach can arrive after BufWipeout. A stale buffer must not break a key reload.
+  if not vim.api.nvim_buf_is_valid(buf) then
+    M.in_buffer[buf] = nil
+    return
+  end
   for _, lhs in ipairs(M.in_buffer[buf] or {}) do
     -- Only ours: a developer's own mapping put there since is not ours to remove.
     local m = vim.api.nvim_buf_call(buf, function() return vim.fn.maparg(lhs, 'n', false, true) end)
@@ -198,6 +203,9 @@ function M.setup(opts)
   local previous = M.bound
   M.bound = {}
   local group = vim.api.nvim_create_augroup('IjBridgeKeys', { clear = true })
+  vim.api.nvim_create_autocmd('BufWipeout', { group = group, callback = function(args)
+    M.in_buffer[args.buf] = nil
+  end })
   for buf in pairs(M.in_buffer) do
     M.unbind_buffer(buf)
   end

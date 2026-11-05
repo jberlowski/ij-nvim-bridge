@@ -70,10 +70,12 @@ class GradleTasks(private val project: Project, private val brain: BrainService)
     }
 
     /** Must run in a read action. */
-    fun list(): JsonElement {
+    fun list(params: JsonObject = buildJsonObject {}): JsonElement {
+        val build = brain.projectContext.build(params)
         val byPath = LinkedHashMap<String, Node>()
         for (info in ProjectDataManager.getInstance().getExternalProjectsData(project, system)) {
             val root = info.externalProjectStructure ?: continue
+            if (build != null && ProjectContext.canonical(root.data.linkedExternalProjectPath) != build) continue
             for (module in ExternalSystemApiUtil.findAll(root, ProjectKeys.MODULE)) {
                 val path = module.data.linkedExternalProjectPath
                 val node = byPath.getOrPut(path) { Node(projectName(module.data.externalName, path), path) }
@@ -127,6 +129,7 @@ class GradleTasks(private val project: Project, private val brain: BrainService)
         val path = params["path"]?.jsonPrimitive?.contentOrNull ?: throw Rename.Refused("no project path given")
         val tasks = params["tasks"]?.jsonArray?.map { it.jsonPrimitive.content }
             ?: listOfNotNull(params["task"]?.jsonPrimitive?.contentOrNull)
+        if (brain.projectContext.owning(path) == null) throw Rename.Refused("not an imported Gradle project: $path")
         if (tasks.isEmpty()) throw Rename.Refused("no task given")
         val args = params["args"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
 
@@ -216,7 +219,11 @@ class GradleTasks(private val project: Project, private val brain: BrainService)
      */
     fun sync(params: JsonObject, transport: Transport): JsonElement {
         val linked = ExternalSystemApiUtil.getSettings(project, system).linkedProjectsSettings.map { it.externalProjectPath }
-        val paths = params["path"]?.jsonPrimitive?.contentOrNull?.let { listOf(it) } ?: linked
+        val selected = brain.projectContext.build(params) ?: params["path"]?.jsonPrimitive?.contentOrNull
+        val paths = selected?.let { requested ->
+            listOf(linked.firstOrNull { ProjectContext.canonical(it) == ProjectContext.canonical(requested) }
+                ?: throw Rename.Refused("not a linked Gradle build: $requested"))
+        } ?: linked
         if (paths.isEmpty()) throw Rename.Refused("no Gradle project is linked to this IDE project")
         if (!syncing.compareAndSet(false, true)) throw Rename.Refused("a Gradle sync is already running")
 

@@ -258,9 +258,9 @@ class TestNeverUsed:
     it today**. What actually removes it in IntelliJ is Safe Delete, and Safe Delete is a refactoring
     (`SafeDeleteHandler`), not an intention: it never appears in `ShowIntentionsPass.getActionsToShow`,
     which is what every code action in this project is built on (CodeActions.kt). Confirmed by asking
-    for code actions at the diagnostic's own range and finding no quick fix among them - only Organize
-    Imports and unrelated intentions. Safe Delete is on the roadmap (FEATURES.md, decision D2: build its
-    edits from the refactoring's own UsageInfo, "usages check first") but is not built; this class is
+    for code actions at the diagnostic's own range and finding no removal quick fix. Suppression
+    actions may also be offered; those do not remove the declaration. Safe Delete is on the roadmap
+    (FEATURES.md, decision D2: build its edits from the refactoring's own UsageInfo, "usages check first") but is not built; this class is
     the marker for that gap, so it fails loudly, on purpose, the day someone starts implementing it -
     at which point it should be rewritten as a TestFixingIt case, not deleted."""
 
@@ -276,7 +276,7 @@ class TestNeverUsed:
         actions = wire.request("textDocument/codeAction", {
             "textDocument": {"uri": uri(KOTLIN)}, "range": never_used["range"],
             "context": {"diagnostics": []}}, timeout=90)
-        assert not [a for a in actions if a["kind"] == "quickfix"], (
+        assert not [a for a in actions if a["kind"] == "quickfix" and not a["title"].startswith("Suppress")], (
             "a quick fix now removes a never-used declaration: promote this gap to a real feature "
             f"(FEATURES.md, D2) and rewrite this as a TestFixingIt case - found {actions}")
 
@@ -287,7 +287,7 @@ class TestNeverUsed:
         actions = wire.request("textDocument/codeAction", {
             "textDocument": {"uri": uri(JAVA)}, "range": never_used["range"],
             "context": {"diagnostics": []}}, timeout=90)
-        assert not [a for a in actions if a["kind"] == "quickfix"], (
+        assert not [a for a in actions if a["kind"] == "quickfix" and not a["title"].startswith("Suppress")], (
             "a quick fix now removes a never-used declaration: promote this gap to a real feature "
             f"(FEATURES.md, D2) and rewrite this as a TestFixingIt case - found {actions}")
 

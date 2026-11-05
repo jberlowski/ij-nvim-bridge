@@ -122,9 +122,9 @@ class TestDisconnect:
         open_and_edit(nv, life, "// unsaved before the disconnect")
         nv.exec_lua("for _, c in ipairs(vim.lsp.get_clients({name = 'ij-bridge'})) do c:stop(true) end")
 
-        wait_until(lambda: statusline(nv) in ("IJ: disconnected", "") or attached(nv) == 0,
+        wait_until(lambda: statusline(nv) in ("IJ: disconnected", "IJ: dormant") or attached(nv) == 0,
                    timeout=10, message="the disconnect was never noticed")
-        wait_until(lambda: attached(nv) == 1 and statusline(nv) == "IJ", timeout=60,
+        wait_until(lambda: attached(nv) == 1 and statusline(nv) == "IJ: spring-kotlin-mvc", timeout=60,
                    message="Neovim never reconnected by itself")
         wait_until(lambda: "unsaved before the disconnect" in mirrors(life).get("CrossFileProducer.kt", {}).get("text", ""),
                    timeout=60, message="the unsaved buffer was not sent again")
@@ -141,7 +141,7 @@ class TestDisconnect:
         wait_until(lambda: "read error" in str(nv.exec_lua("return require('ij_bridge').events")),
                    timeout=10, message="the read error was ignored")
         # The Brain is still up in this test, so it comes back by itself, with its buffers.
-        wait_until(lambda: attached(nv) == 1 and statusline(nv) == "IJ", timeout=60,
+        wait_until(lambda: attached(nv) == 1 and statusline(nv) == "IJ: spring-kotlin-mvc", timeout=60,
                    message="Neovim never reconnected after the reset\n" + plugin_state(nv))
         wait_until(lambda: "unsaved before the reset" in mirrors(life).get("CrossFileProducer.kt", {}).get("text", ""),
                    timeout=60, message="the unsaved buffer was not sent again")
@@ -195,7 +195,7 @@ class TestDisconnect:
         # A buffer opened now must not error, hang or attach to a ghost.
         nv.command(f"edit {PRODUCER}")
         assert attached(nv) == 0
-        assert statusline(nv) == ""                 # never attached: Dormant, not "disconnected"
+        assert statusline(nv) == "IJ: dormant"                 # never attached: Dormant, not "disconnected"
         assert nv.eval("v:errmsg") == ""
 
         start_ide(life)
